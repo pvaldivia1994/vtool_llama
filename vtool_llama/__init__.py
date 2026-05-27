@@ -27,6 +27,7 @@ from __future__ import annotations
 from .engine import VToolLlama
 from .exceptions import (
     ConfigError,
+    ContextOverflowError,
     CUDAUnavailableError,
     EmptyPromptError,
     InferenceError,
@@ -36,15 +37,34 @@ from .exceptions import (
     OOMError,
     VToolLlamaError,
 )
-from .types import ConfigSchema, GenerationStats, Message, ModelInfo
+from .slash_commands import SlashCommandRegistry
+from .character_manager import CharacterManager
+from .types import (
+    ConfigSchema,
+    GenerationStats,
+    Message,
+    ModelInfo,
+    IdentityDNA,
+    PersonalityDNA,
+    SpeechDNA,
+    RulesDNA,
+    MemoryEntry,
+    RuntimeState,
+    RelationshipState,
+    PersonalityState,
+    CharacterMod,
+)
 
 # Versión de la librería (semver)
-__version__ = "0.1.0"
+__version__ = "0.2.2"
 
 # Exportar la API pública
 __all__ = [
     # Clase principal
     "VToolLlama",
+    # Sistema de agente
+    "CharacterManager",
+    "SlashCommandRegistry",
     # Excepciones
     "VToolLlamaError",
     "ModelNotFoundError",
@@ -53,6 +73,7 @@ __all__ = [
     "OOMError",
     "EmptyPromptError",
     "ConfigError",
+    "ContextOverflowError",
     "InferenceError",
     "ModelNotLoadedError",
     # Tipos
@@ -60,6 +81,15 @@ __all__ = [
     "Message",
     "ModelInfo",
     "GenerationStats",
+    "IdentityDNA",
+    "PersonalityDNA",
+    "SpeechDNA",
+    "RulesDNA",
+    "MemoryEntry",
+    "RuntimeState",
+    "RelationshipState",
+    "PersonalityState",
+    "CharacterMod",
     # Metadatos
     "__version__",
 ]

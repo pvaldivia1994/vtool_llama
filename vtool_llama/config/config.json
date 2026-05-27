@@ -37,5 +37,7 @@
 
   "model_idle_timeout": 600,
 
-  "auto_unload_model": false
+  "auto_unload_model": false,
+
+  "short_memory_limit": 5
 }

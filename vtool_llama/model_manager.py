@@ -570,6 +570,53 @@ class ModelManager:
             self.load_model(model_path)
 
     # ------------------------------------------------------------------
+    # KV Cache Management (Personality Warmup)
+    # ------------------------------------------------------------------
+
+    def save_kv_state(self, filepath: str) -> None:
+        """
+        Guarda el estado binario del KV Cache (LlamaState) en disco.
+        """
+        with self._lock:
+            if not self._model: return
+            import pickle
+            state = self._model.save_state()
+            with open(filepath, "wb") as f:
+                pickle.dump(state, f)
+            self._log("MODEL", f"KV Cache guardado en {filepath}")
+
+    def load_kv_state(self, filepath: str) -> bool:
+        """
+        Carga un estado binario de KV Cache si existe.
+        """
+        with self._lock:
+            if not self._model: return False
+            if not os.path.exists(filepath): return False
+            try:
+                import pickle
+                with open(filepath, "rb") as f:
+                    state = pickle.load(f)
+                self._model.load_state(state)
+                self._log("MODEL", f"KV Cache cargado desde {filepath}")
+                return True
+            except Exception as e:
+                self._error(f"Error cargando KV Cache {filepath}: {e}")
+                return False
+
+    def warmup_system_prompt(self, system_prompt: str) -> None:
+        """
+        Pre-evalúa el system prompt para rellenar el KV Cache.
+        """
+        with self._lock:
+            if not self._model: return
+            self._log("MODEL", "Ejecutando warmup del system prompt (KV Cache)...")
+            self._model.create_chat_completion(
+                messages=[{"role": "system", "content": system_prompt}],
+                max_tokens=1
+            )
+            self._log("MODEL", "Warmup completado.")
+
+    # ------------------------------------------------------------------
     # Consultas de capacidad
     # ------------------------------------------------------------------
 

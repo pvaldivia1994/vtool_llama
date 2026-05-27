@@ -9,12 +9,142 @@ Incluye:
 - ModelInfo: metadatos del modelo cargado
 - ConfigSchema: estructura esperada del config.json
 - GenerationStats: estadísticas de una inferencia
+- PersonalityState: estado base de identidad y estilo del agente
+- RelationshipState: relación del personaje con el usuario
+- MemoryEntry: una memoria persistente individual
+- MoodState: estado emocional de corto plazo
 """
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field, asdict
 from typing import Optional
+
+
+# ======================================================================
+# CHARACTER SYSTEM TYPES (DNA, STATE, MEMORY, MODS)
+# ======================================================================
+
+# --- DNA (Inmutable) ---
+
+@dataclass
+class IdentityDNA:
+    name: str = ""
+    role: str = ""
+    age: str = "Desconocida"
+    background: str = ""
+    scenario: str = "Una IA creada para ayudar."
+
+@dataclass
+class PersonalityDNA:
+    traits: list[str] = field(default_factory=list)
+    flaws: list[str] = field(default_factory=list)
+    motivations: list[str] = field(default_factory=list)
+
+@dataclass
+class SpeechDNA:
+    style: str = ""
+    verbosity: str = ""
+    tone: str = ""
+    emotions: list[str] = field(default_factory=list)
+    examples: list[str] = field(default_factory=list)
+
+@dataclass
+class RulesDNA:
+    core_rules: list[str] = field(default_factory=list)
+    never_do: list[str] = field(default_factory=list)
+    response_style: list[str] = field(default_factory=list)
+    roleplay_mode: bool = False
+
+# --- Memory ---
+
+@dataclass
+class MemoryEntry:
+    """
+    Una memoria persistente individual (long term).
+    """
+    id: str = ""
+    content: str = ""
+    priority: float = 0.5
+    always_include: bool = False
+    tags: list[str] = field(default_factory=list)
+
+    def __post_init__(self):
+        if not self.id:
+            self.id = uuid.uuid4().hex[:8]
+
+@dataclass
+class EpisodeSnapshot:
+    """
+    Snapshot de memoria episódica (corto plazo versionada).
+    
+    Cada episodio almacena un resumen generado por LLM y los
+    últimos N mensajes de la conversación. Se guarda como archivo
+    independiente (episode_001.json, episode_002.json, etc.) 
+    para permitir rollback y recuperación de estados anteriores.
+    """
+    episode_id: int = 0
+    timestamp: str = ""
+    summary: str = ""
+    messages: list[dict] = field(default_factory=list)
+
+    def __post_init__(self):
+        if not self.timestamp:
+            from datetime import datetime
+            self.timestamp = datetime.now().isoformat()
+
+# --- State (Runtime Cache) ---
+
+@dataclass
+class RuntimeState:
+    """
+    Estado en tiempo real de la sesión (mood actual, confianza, contexto).
+    """
+    current_emotion: str = "neutral"
+    active_context: str = ""
+    version: int = 0
+
+@dataclass
+class RelationshipState:
+    """
+    Memoria afectiva y evolución relacional con el usuario.
+    """
+    trust_level: float = 0.5
+    familiarity: float = 0.0
+    affective_memory: list[str] = field(default_factory=list)
+    dynamics: list[str] = field(default_factory=list)
+    version: int = 0
+
+@dataclass
+class PersonalityState:
+    """
+    Resumen dinámico del DNA + Memory que se inyecta al prompt.
+    """
+    base_personality: str = ""
+    emotional_signature: dict[str, str] = field(default_factory=lambda: {"default": "neutral"})
+    user_model: dict[str, float] = field(default_factory=lambda: {"trust_level": 0.5})
+    behavior_summary: str = ""
+    memory_summary: str = ""
+    tool_affinity: list[str] = field(default_factory=list)
+    version: int = 0
+
+# --- Mods ---
+
+@dataclass
+class CharacterMod:
+    """
+    Modificador temporal que altera el personaje sin cambiar el DNA.
+    """
+    id: str = "mood_mod"
+    target_layer: str = "speech"
+    override_value: str = ""
+    intensity: float = 1.0
+
+
+# ======================================================================
+# ORIGINAL TYPES
+# ======================================================================
 
 
 @dataclass
@@ -113,3 +243,4 @@ class ConfigSchema:
     context_reserve_tokens: int = 800
     model_idle_timeout: int = 600
     auto_unload_model: bool = False
+    short_memory_limit: int = 5
