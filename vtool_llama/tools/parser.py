@@ -23,11 +23,13 @@ from .definitions import INTERNAL_TOOLS
 
 TEXT_TOOL_RE = re.compile(
     r"""
-    \{\{(\w+)\{(.*?)\}\}                                   # {{tool{args}}}
+    \{\{tool_code:(\w+)\{(.*?)\}\}                         # {{tool_code:name{args}}}
+    |
+    \{\{(\w+)\{(.*?)\}\}                                   # {{name{args}}}
     |
     <\|tool_call\>call:(\w+)\{(.*?)\}<tool_call\|>         # ChatML
     |
-    (?:^|\s)call:(\w+)\{(.*?)\}                             # raw call:name{}
+    (?:^|\s)call:(\w+)\{(.*?)\}                            # raw call:name{}
     |
     <tool_call>\s*(\w+)\((.*?)\)\s*</tool_call>            # XML-ish
     """,
@@ -51,8 +53,8 @@ def find_tool_pattern_start(text: str) -> Optional[str]:
 def parse_text_tool_calls(text: str) -> list[tuple[str, dict]]:
     results: list[tuple[str, dict]] = []
     for match in TEXT_TOOL_RE.finditer(text):
-        fn_name = match.group(1) or match.group(3) or match.group(5) or match.group(7)
-        raw_args = match.group(2) or match.group(4) or match.group(6) or match.group(8) or ""
+        fn_name = match.group(1) or match.group(3) or match.group(5) or match.group(7) or match.group(9)
+        raw_args = match.group(2) or match.group(4) or match.group(6) or match.group(8) or match.group(10) or ""
         parsed = _safe_parse_args(raw_args)
         if fn_name:
             results.append((fn_name, parsed))

@@ -51,6 +51,7 @@ from .tools import (
     SCENE_SYSTEM_COMMAND,
     TOOL_USAGE_POLICY,
     ToolExecutionManager,
+    StreamPostProcessor,
     parse_text_tool_calls,
     strip_text_tool_calls,
     execute_text_tool,
@@ -477,7 +478,14 @@ class VToolLlama:
 
                     full_response = ""
                     tool_calls_chunks = []
-                    
+
+                    # StreamPostProcessor intercepta tool calls en vuelo
+                    # para que el usuario NO vea {{...}} ni <|tool_call|>...
+                    stream_pp = StreamPostProcessor(
+                        on_tool_executed=self._on_stream_tool_detected,
+                        log_fn=self._log_info,
+                    )
+
                     for chunk in stream:
                         choices = chunk.get("choices", [])
                         if not choices:
@@ -486,13 +494,19 @@ class VToolLlama:
 
                         if "tool_calls" in delta and delta["tool_calls"]:
                             tool_calls_chunks.append(delta["tool_calls"])
-                            # No yield de tool calls internos para no ensuciar la consola del usuario
-                            # yield chunk
                         else:
-                            token = delta.get("content", "")
-                            if token:
-                                full_response += token
-                                yield token
+                            for event in stream_pp.feed(delta):
+                                if event["type"] == "text":
+                                    full_response += event["content"]
+                                    yield event["content"]
+                                elif event["type"] == "tool_executed":
+                                    pass  # ya se manejo en el callback
+
+                    # Flush final: texto que quedo en el buffer
+                    for event in stream_pp.flush():
+                        if event["type"] == "text":
+                            full_response += event["content"]
+                            yield event["content"]
 
                     final_tool_calls = None
                     if tool_calls_chunks:
@@ -1757,6 +1771,17 @@ class VToolLlama:
             lines.append(f"  #{ep['episode_id']:03d} [{ep['timestamp'][:16]}] ({ep['message_count']} msgs) {ep['summary']}{current}")
         lines.append("\nUso: /episodes load N | /episodes delete N")
         return "\n".join(lines)
+
+    def _on_stream_tool_detected(self, fn_name: str, fn_args: dict) -> None:
+        """
+        Callback del StreamPostProcessor: ejecuta una tool detectada
+        en el stream sin mostrarla al usuario.
+        """
+        execute_text_tool(
+            fn_name, fn_args,
+            add_memory_fn=self._character_manager.add_memory,
+            log_fn=self._log_info,
+        )
 
     def _log_generation_stats(self) -> None:
         """Muestra estadísticas de la última generación si debug está activo."""
