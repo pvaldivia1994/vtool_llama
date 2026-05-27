@@ -1,0 +1,15 @@
+# Ignorar TODAS las carpetas de personajes creadas por el usuario/IA
+*
+!.gitignore
+
+# Permitir unicamente el personaje base por defecto
+!default/
+
+# Dentro del personaje 'default', ignorar todo su estado dinamico y memoria
+default/memory/*
+default/state/*
+default/mods/*
+
+# Y asegurarse de versionar siempre el DNA del 'default'
+!default/dna/
+!default/dna/*
