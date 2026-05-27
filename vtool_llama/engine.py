@@ -193,16 +193,35 @@ class VToolLlama:
                 "type": "function",
                 "function": {
                     "name": "remember_memory",
-                    "description": "Guarda información en tu memoria a largo plazo. IMPORTANTE: DEBES usar esta herramienta INMEDIATAMENTE siempre que el usuario te pida que recuerdes, guardes o memorices un dato.",
+                    "description": "Guarda un recuerdo en tu memoria a largo plazo. Escribe TU el contenido en tus propias palabras, como si lo recordaras internamente - reformula, resume o interpreta lo que dijo el usuario.\n\nTRIGGERS (debes llamar esto cuando):\n- El usuario dice \'recuerda que...\', \'guarda esto...\', \'memoriza...\', \'no olvides...\', \'ten en cuenta que...\', \'para que sepas...\'\n- El usuario comparte informacion personal sobre si mismo (nombre, gustos, preferencias, datos importantes)\n- Ocurre un evento importante en la conversacion que deberias recordar para siempre\n- El usuario te pide explicitamente que guardes algo\n\nNO uses esta herramienta para:\n- Responder preguntas o conversar normalmente\n- Repetir lo que el usuario dijo sin reformularlo\n\nEjemplos de contenido que DEBES escribir tu (reformulado):\n- Usuario: \'Me llamo Juan\' -> content: \'El usuario se llama Juan.\'\n- Usuario: \'Odio el cafe con azucar\' -> content: \'Al usuario no le gusta el cafe con azucar, prefiere sin endulzar.\'\n- Usuario: \'Tengo 30 anos\' -> content: \'El usuario tiene 30 anos.\'\n- Usuario: \'Trabajo en una cafeteria\' -> content: \'El usuario trabaja como barista en una cafeteria.\'",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "content": {
                                 "type": "string",
-                                "description": "El dato exacto a recordar, escrito de forma concisa."
+                                "description": "El recuerdo escrito en TUS propias palabras, como si lo pensaras internamente. Reformula, no copies textual. Ej: en vez de 'me llamo Juan' escribe 'El usuario se llama Juan'."
                             }
                         },
-                        "required": ["content"]
+                        "required": ["content"],
+                        "additionalProperties": false
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "describe_scene",
+                    "description": "Describe INMERSIVAMENTE la escena actual en tercera persona, como si narraras una novela. Escribe TU descripcion con tus propias palabras sensoriales (vista, oido, olfato, tacto).\n\nTRIGGERS (debes llamar esto cuando):\n- El usuario te pide 'describe la escena', 'donde estas?', 'que ves?', 'que pasa a mi alrededor?', 'como es el lugar?'\n- El usuario dice '/scene_view'\n- Quieres iniciar una interaccion estableciendo el ambiente\n- El usuario pregunta 'que estas haciendo?'\n\nFORMATO de respuesta:\n- Usa DOBLES ASTERISCOS para la descripcion: ** texto **\n- Describe en tercera persona: ** [TuNombre] hace algo... **\n- Incluye: entorno, iluminacion, sonidos, olores, tu accion actual\n- Narrativo e inmersivo, NO uses bullet points ni listas\n\nEjemplos:\n- focus='completo': ** Elara camina por el bosque oscuro. La luna se filtra entre las ramas, pintando sombras danzantes en el suelo cubierto de hojas secas. El aire huele a tierra humeda y pino. Una lechuza ulula a lo lejos... **\n- focus='entorno': ** El salon del castillo es inmenso. Antorchas parpadean en las paredes de piedra, iluminando tapices antiguos que cuentan historias de batallas olvidadas. El frio del suelo de marmol traspasa las suelas... **\n- focus='accion': ** [Nombre] se arrodilla junto al rio, sumerge las manos en el agua fria y observa como la corriente arrastra las hojas caidas. Suspira, levantando la mirada hacia el horizonte... **",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "focus": {
+                                "type": "string",
+                                "description": "Que aspecto enfocar: 'completo' (todo, por defecto), 'entorno' (solo el lugar), 'accion' (lo que haces), 'emocion' (lo que sientes)."
+                            }
+                        },
+                        "required": [],
+                        "additionalProperties": false
                     }
                 }
             }
@@ -212,8 +231,9 @@ class VToolLlama:
         active_tools = (tools or []) + internal_tools
 
         # --- 1. Interceptar slash commands ---
+        scene_prompt = "(SYSTEM COMMAND: El usuario ha solicitado una vista de escena. Describe detalladamente la escena actual, el entorno, la iluminación y exactamente lo que estás haciendo en este preciso instante en tercera persona de forma inmersiva, usando dobles asteriscos. Ejemplo: ** [Nombre] barre el patio con melancolía... **)"
         if prompt.strip().lower() == "/scene_view":
-            prompt = "(SYSTEM COMMAND: El usuario ha solicitado una vista de escena. Describe detalladamente la escena actual, el entorno, la iluminación y exactamente lo que estás haciendo en este preciso instante en tercera persona de forma inmersiva, usando dobles asteriscos. Ejemplo: ** [Nombre] barre el patio con melancolía... **)"
+            prompt = scene_prompt
             slash_result = None
         else:
             slash_result = self._handle_slash_command(prompt)
@@ -221,8 +241,17 @@ class VToolLlama:
         if slash_result is not None:
             return slash_result
 
-        # --- 2. Forzar rebuild del KV Cache si hay memorias nuevas ---
-        self._check_and_rebuild_if_needed()
+        # --- 2. Interceptar #mem (atajo directo para guardar memoria) ---
+        mem_prefix = "#mem "
+        if prompt.strip().startswith(mem_prefix):
+            mem_content = prompt.strip()[len(mem_prefix):].strip()
+            if mem_content:
+                self._character_manager.add_memory(
+                    content=mem_content, always_include=True, priority=1.0,
+                )
+                self._log_info(f"🧠 [#mem] Memoria guardada: {mem_content}")
+                char_name = self._character_manager.character_name.capitalize() if self._character_manager.character_name else "El personaje"
+                prompt = f"(Has guardado un recuerdo: '{mem_content}') Confirma brevemente en character que lo has recordado, sin mencionar herramientas ni sistemas."
 
         with self._lock:
             # --- 3. Actualizar short memory ---
@@ -282,18 +311,24 @@ class VToolLlama:
                                         self.add_memory(mem_content, priority=1.0)
                                         self._log_info(f"🧠 [Auto-Tool] Memoria guardada automáticamente: {mem_content}")
                                         memory_saved = True
-                                        
-                                        # Registrar tool_call y su respuesta en el historial
-                                        # para que el modelo pueda continuar la conversación
                                         self._memory.add_assistant_message(content=None, tool_calls=[tc])
                                         self._memory.add_tool_message(content="Memoria guardada exitosamente. Ahora respondele al usuario.", tool_call_id=tc.get("id", ""))
                                 except Exception as e:
                                     self._log_warning(f"Fallo al ejecutar remember_memory: {e}")
-                                    
+
+                            elif fn_name == "describe_scene":
+                                internal_call_found = True
+                                self._log_info(f"🎬 [Auto-Tool] Descripción de escena solicitada")
+                                self._memory.add_assistant_message(content=None, tool_calls=[tc])
+                                self._memory.add_tool_message(
+                                    content=scene_prompt,
+                                    tool_call_id=tc.get("id", ""),
+                                )
+
                         if internal_call_found:
                             # Re-evaluar el bucle para que el modelo genere la respuesta de texto
                             continue
-                            
+
                         # Si no es interna, validar contra las tools del usuario
                         if tools:
                             valid_tool_calls = self._validate_tool_calls(tool_calls, tools)
@@ -303,11 +338,15 @@ class VToolLlama:
                                 return msg_choice
 
                     # --- Fallback: parser de tool_calls en texto plano ---
-                    # Algunos modelos GGUF no soportan function calling nativo
-                    # y escriben {{remember_memory{content: "..."}} como texto.
+                    # Algunos modelos GGUF escriben tool calls como texto
+                    # en vez de usar el formato OpenAI estructurado:
+                    #   {{remember_memory{content: "..."}}}
+                    #   {{get_weather{location: "Madrid"}}}
                     if not tool_calls and not memory_saved:
                         text_tools = self._parse_text_tool_calls(response_text)
                         if text_tools:
+                            internal_call_found = False
+                            external_calls = []
                             for fn_name, fn_args in text_tools:
                                 if fn_name == "remember_memory":
                                     mem_content = fn_args.get("content", "")
@@ -315,9 +354,23 @@ class VToolLlama:
                                         self.add_memory(mem_content, priority=1.0)
                                         self._log_info(f"🧠 [Auto-Tool/Texto] Memoria guardada: {mem_content}")
                                         memory_saved = True
-                            if memory_saved:
-                                response_text = self._strip_text_tool_calls(response_text)
+                                        internal_call_found = True
+                                elif fn_name == "describe_scene":
+                                    self._log_info(f"🎬 [Auto-Tool/Texto] Descripción de escena solicitada")
+                                    internal_call_found = True
+                                else:
+                                    external_calls.append({
+                                        "function": {"name": fn_name, "arguments": json.dumps(fn_args)}
+                                    })
+                            response_text = self._strip_text_tool_calls(response_text)
+                            if internal_call_found:
                                 continue
+                            if external_calls and tools:
+                                valid = self._validate_tool_calls(external_calls, tools)
+                                if valid:
+                                    self._memory.add_assistant_message(content=response_text, tool_calls=valid)
+                                    self._short_memory.append({"role": "assistant", "content": "(Llama a herramienta externa)"})
+                                    return {"choices": [{"message": {"tool_calls": valid}}]}
 
                     # Respuesta normal de texto (sin tool_calls o internas ya resueltas)
                     if memory_saved:
@@ -372,9 +425,11 @@ class VToolLlama:
         """
         self._validate_prompt(prompt)
 
+        scene_prompt = "(SYSTEM COMMAND: El usuario ha solicitado una vista de escena. Describe detalladamente la escena actual, el entorno, la iluminación y exactamente lo que estás haciendo en este preciso instante en tercera persona de forma inmersiva, usando dobles asteriscos. Ejemplo: ** [Nombre] barre el patio con melancolía... **)"
+
         # --- 1. Interceptar slash commands ---
         if prompt.strip().lower() == "/scene_view":
-            prompt = "(SYSTEM COMMAND: El usuario ha solicitado una vista de escena. Describe detalladamente la escena actual, el entorno, la iluminación y exactamente lo que estás haciendo en este preciso instante en tercera persona de forma inmersiva, usando dobles asteriscos. Ejemplo: ** [Nombre] barre el patio con melancolía... **)"
+            prompt = scene_prompt
             slash_result = None
         else:
             slash_result = self._handle_slash_command(prompt)
@@ -383,22 +438,53 @@ class VToolLlama:
             yield slash_result
             return
 
+        # --- 2. Interceptar #mem (atajo directo para guardar memoria) ---
+        mem_prefix = "#mem "
+        if prompt.strip().startswith(mem_prefix):
+            mem_content = prompt.strip()[len(mem_prefix):].strip()
+            if mem_content:
+                self._character_manager.add_memory(
+                    content=mem_content, always_include=True, priority=1.0,
+                )
+                self._log_info(f"🧠 [#mem] Memoria guardada: {mem_content}")
+                char_name = self._character_manager.character_name.capitalize() if self._character_manager.character_name else "El personaje"
+                prompt = f"(Has guardado un recuerdo: '{mem_content}') Confirma brevemente en character que lo has recordado, sin mencionar herramientas ni sistemas."
+
         # --- 0. Construir lista de herramientas internas (Auto-Tools) ---
         internal_tools = [
             {
                 "type": "function",
                 "function": {
                     "name": "remember_memory",
-                    "description": "Guarda información en tu memoria a largo plazo. IMPORTANTE: DEBES usar esta herramienta INMEDIATAMENTE siempre que el usuario te pida que recuerdes, guardes o memorices un dato.",
+                    "description": "Guarda un recuerdo en tu memoria a largo plazo. Escribe TÚ el contenido en tus propias palabras, como si lo recordaras internamente — reformula, resume o interpreta lo que dijo el usuario.\n\nTRIGGERS (debes llamar esto cuando):\n- El usuario dice 'recuerda que...', 'guarda esto...', 'memoriza...', 'no olvides...', 'ten en cuenta que...', 'para que sepas...'\n- El usuario comparte información personal sobre sí mismo (nombre, gustos, preferencias, datos importantes)\n- Ocurre un evento importante en la conversación que deberías recordar para siempre\n- El usuario te pide explícitamente que guardes algo\n\nNO uses esta herramienta para:\n- Responder preguntas o conversar normalmente\n- Repetir lo que el usuario dijo sin reformularlo\n\nEjemplos de contenido que DEBES escribir tú (reformulado):\n- Usuario: 'Me llamo Juan' → content: 'El usuario se llama Juan.'\n- Usuario: 'Odio el café con azúcar' → content: 'Al usuario no le gusta el café con azúcar, prefiere sin endulzar.'\n- Usuario: 'Tengo 30 años' → content: 'El usuario tiene 30 años.'\n- Usuario: 'Trabajo en una cafetería' → content: 'El usuario trabaja como barista en una cafetería.'",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "content": {
                                 "type": "string",
-                                "description": "El dato exacto a recordar, escrito de forma concisa."
+                                "description": "El recuerdo escrito en TUS propias palabras, como si lo pensaras internamente. Reformula, no copies textual. Ej: en vez de 'me llamo Juan' escribe 'El usuario se llama Juan'."
                             }
                         },
-                        "required": ["content"]
+                        "required": ["content"],
+                        "additionalProperties": false
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "describe_scene",
+                    "description": "Describe INMERSIVAMENTE la escena actual en tercera persona, como si narraras una novela. Escribe TU descripcion con tus propias palabras sensoriales (vista, oido, olfato, tacto).\n\nTRIGGERS (debes llamar esto cuando):\n- El usuario te pide 'describe la escena', 'donde estas?', 'que ves?', 'que pasa a mi alrededor?', 'como es el lugar?'\n- El usuario dice '/scene_view'\n- Quieres iniciar una interaccion estableciendo el ambiente\n- El usuario pregunta 'que estas haciendo?'\n\nFORMATO de respuesta:\n- Usa DOBLES ASTERISCOS para la descripcion: ** texto **\n- Describe en tercera persona: ** [TuNombre] hace algo... **\n- Incluye: entorno, iluminacion, sonidos, olores, tu accion actual\n- Narrativo e inmersivo, NO uses bullet points ni listas\n\nEjemplos:\n- focus='completo': ** Elara camina por el bosque oscuro. La luna se filtra entre las ramas, pintando sombras danzantes en el suelo cubierto de hojas secas. El aire huele a tierra humeda y pino. Una lechuza ulula a lo lejos... **\n- focus='entorno': ** El salon del castillo es inmenso. Antorchas parpadean en las paredes de piedra, iluminando tapices antiguos que cuentan historias de batallas olvidadas. El frio del suelo de marmol traspasa las suelas... **\n- focus='accion': ** [Nombre] se arrodilla junto al rio, sumerge las manos en el agua fria y observa como la corriente arrastra las hojas caidas. Suspira, levantando la mirada hacia el horizonte... **",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "focus": {
+                                "type": "string",
+                                "description": "Que aspecto enfocar: 'completo' (todo, por defecto), 'entorno' (solo el lugar), 'accion' (lo que haces), 'emocion' (lo que sientes)."
+                            }
+                        },
+                        "required": [],
+                        "additionalProperties": false
                     }
                 }
             }
@@ -487,6 +573,15 @@ class VToolLlama:
                                         self._memory.add_tool_message(content="Memoria guardada exitosamente. Continua tu respuesta ahora.", tool_call_id=tc.get("id", ""))
                                 except Exception as e:
                                     self._log_warning(f"Fallo al ejecutar remember_memory en stream: {e}")
+
+                            elif fn_name == "describe_scene":
+                                internal_call_found = True
+                                self._log_info(f"🎬 [Auto-Tool] Descripción de escena solicitada en stream")
+                                self._memory.add_assistant_message(content=None, tool_calls=[tc])
+                                self._memory.add_tool_message(
+                                    content=scene_prompt,
+                                    tool_call_id=tc.get("id", ""),
+                                )
                                     
                         if internal_call_found:
                             continue # Re-iniciar bucle de streaming para generar el texto de confirmación
@@ -503,14 +598,25 @@ class VToolLlama:
                     # --- Fallback: parser de tool_calls en texto plano ---
                     if not final_tool_calls:
                         text_tools = self._parse_text_tool_calls(full_response)
-                        for fn_name, fn_args in text_tools:
-                            if fn_name == "remember_memory":
-                                mem_content = fn_args.get("content", "")
-                                if mem_content:
-                                    self.add_memory(mem_content, priority=1.0)
-                                    self._log_info(f"🧠 [Auto-Tool/Texto] Memoria guardada en stream: {mem_content}")
-
                         if text_tools:
+                            for fn_name, fn_args in text_tools:
+                                if fn_name == "remember_memory":
+                                    mem_content = fn_args.get("content", "")
+                                    if mem_content:
+                                        self.add_memory(mem_content, priority=1.0)
+                                        self._log_info(f"🧠 [Auto-Tool/Texto] Memoria guardada en stream: {mem_content}")
+                                        char_name = self._character_manager.character_name.capitalize() if self._character_manager.character_name else "El personaje"
+                                        yield f"\n** {char_name} recordará esto **\n\n"
+                                elif fn_name == "describe_scene":
+                                    self._log_info(f"🎬 [Auto-Tool/Texto] Descripción de escena solicitada en stream")
+                                elif tools:
+                                    # Tool externa en texto plano → devolver como si fuera real
+                                    tc = {"function": {"name": fn_name, "arguments": json.dumps(fn_args)}}
+                                    valid = self._validate_tool_calls([tc], tools)
+                                    if valid:
+                                        self._memory.add_assistant_message(content=None, tool_calls=valid)
+                                        yield {"choices": [{"message": {"tool_calls": valid}}]}
+                                        return
                             full_response = self._strip_text_tool_calls(full_response)
 
                     # Final de respuesta textual
@@ -886,6 +992,17 @@ class VToolLlama:
         """
         with self._lock:
             return self._model_manager.list_available_models()
+
+    def supports_tools(self) -> bool:
+        """
+        Detecta si el modelo cargado soporta function calling nativo
+        (OpenAI-style tool calls) revisando su chat template en la
+        metadata del GGUF.
+
+        Returns:
+            True si el modelo soporta tools, False si no
+        """
+        return self._model_manager.supports_tools()
 
     # ======================================================================
     # API PÚBLICA — DEBUG
