@@ -1,0 +1,41 @@
+{
+  "debug": true,
+
+  "python_path": "C:/Users/LiuniK/AppData/Local/Python/pythoncore-3.14-64",
+
+  "models_directory": "C:/_IA/_llama_models",
+
+  "default_model": "Gemma-4-E2B.gguf",
+
+  "system_prompt": "Eres un asistente útil y natural.",
+
+  "n_ctx": 4096,
+  "n_batch": 512,
+
+  "gpu_layers": -1,
+  "threads": 8,
+  "flash_attn": true,
+
+  "temperature": 0.8,
+  "top_p": 0.9,
+  "top_k": 40,
+  "repeat_penalty": 1.1,
+
+  "max_tokens": 512,
+  "seed": -1,
+
+  "stream": true,
+
+  "enable_logging": true,
+  "enable_console_debug": false,
+
+  "history_limit": 40,
+
+  "auto_trim_context": true,
+
+  "context_reserve_tokens": 800,
+
+  "model_idle_timeout": 600,
+
+  "auto_unload_model": false
+}

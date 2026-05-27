@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Model files (too large for git)
+*.gguf
+models/
+
+# Logs
+logs/
+
+# Environment
+.env
+
+# Atlassian
+.atl/
+
+# OS
+Thumbs.db
+.DS_Store

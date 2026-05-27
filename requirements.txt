@@ -1,0 +1,31 @@
+# =============================================================================
+# vtool_llama — Dependencias necesarias
+# =============================================================================
+# Instalación:
+#   pip install -r requirements.txt
+#
+# Para soporte CUDA en Windows (RTX 3050):
+#   pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121
+#
+# Para CPU-only:
+#   pip install llama-cpp-python
+# =============================================================================
+
+# Motor de inferencia GGUF con bindings Python
+llama-cpp-python>=0.2.0,<0.4.0
+
+# Validación tipada de configuración
+pydantic>=2.0.0
+
+# JSON rápido (alternativa a json estándar)
+orjson>=3.9.0
+
+# Colores en terminal Windows
+colorama>=0.4.6
+
+# Tablas y formato rich para debug
+
+# =============================================================================
+# Dependencias opcionales (para desarrollo / ejemplos)
+# =============================================================================
+# rich>=13.0.0     # Descomentar si quieres output más vistoso en ejemplos
