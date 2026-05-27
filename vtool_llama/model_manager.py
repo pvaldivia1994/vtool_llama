@@ -478,8 +478,7 @@ class ModelManager:
 
             if tools is not None:
                 kwargs["tools"] = tools
-            if tool_choice is not None:
-                kwargs["tool_choice"] = tool_choice
+                kwargs["tool_choice"] = tool_choice or "auto"
 
             try:
                 result = self._model.create_chat_completion(**kwargs)
@@ -689,7 +688,39 @@ class ModelManager:
             "vram_total": f"{hw_info['vram_total_gb']} GB",
             "vram_used": f"{hw_info['vram_used_gb']} GB",
             "vram_free": f"{hw_info['vram_free_gb']} GB",
+            "supports_tools": self.supports_tools(),
         }
+
+    def supports_tools(self) -> bool:
+        """
+        Detecta si el modelo cargado soporta function calling nativo
+        (OpenAI-style tool calls) revisando su chat template.
+
+        Método: busca en la metadata del GGUF el campo
+        'tokenizer.chat_template'. Si contiene 'tools' o 'functions',
+        el template soporta tool calling.
+
+        Returns:
+            True si el modelo probablemente soporta tools, False si no
+        """
+        if not self._model:
+            return False
+        try:
+            metadata = getattr(self._model, "metadata", None) or {}
+            chat_template = metadata.get("tokenizer.chat_template", "")
+            if not chat_template:
+                self._log("MODEL", "No hay chat_template en metadata — tools probablemente no soportadas")
+                return False
+            has_tools = "tools" in chat_template.lower() or "functions" in chat_template.lower()
+            self._log("MODEL", f"Chat template {'SOPORTA' if has_tools else 'NO SOPORTA'} tools (len={len(chat_template)})")
+            if has_tools:
+                # Mostrar snippet del template para debug
+                snippet = chat_template[:200].replace('\n', ' ')
+                self._log("MODEL", f"Template snippet: {snippet}")
+            return has_tools
+        except Exception as e:
+            self._log("MODEL", f"Error leyendo metadata: {e}")
+            return False
 
     def count_tokens(self, text: str) -> int:
         """

@@ -173,6 +173,14 @@ def main():
                 print(f"VRAM Usada en el Sistema: {info.get('vram_used')}")
                 print(f"VRAM Libre en la Tarjeta: {info.get('vram_free')}")
                 
+                tools_support = info.get('supports_tools', False)
+                if tools_support:
+                    print("\n--- CAPACIDADES DEL MODELO ---")
+                    print(f"Tool Calling Nativo: \033[32mSÍ\033[0m (usa tools= en chat())")
+                else:
+                    print("\n--- CAPACIDADES DEL MODELO ---")
+                    print(f"Tool Calling Nativo: \033[33mNO\033[0m (usa el fallback {{tool_name{{...}})")
+
                 disponibles = llm.list_available_models()
                 if disponibles:
                     print(f"\nModelos disponibles ({len(disponibles)}):")

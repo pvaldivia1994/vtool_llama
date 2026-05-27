@@ -377,12 +377,16 @@ class CharacterManager:
             # Determinar el siguiente número
             existing = sorted(episodes_dir.glob("episode_*.json"))
             next_id = len(existing) + 1
-            
+
+            filename = f"episode_{next_id:03d}.json"
+
             episode = EpisodeSnapshot(
                 episode_id=next_id,
                 summary=summary,
                 messages=messages,
             )
+            from dataclasses import asdict
+            self._write_json(episodes_dir / filename, asdict(episode))
             self.current_episode = episode
             self._prompt_dirty = True
             self._log("EPISODE", f"Episodio #{next_id} guardado ({filename})")

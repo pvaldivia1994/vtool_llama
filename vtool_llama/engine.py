@@ -141,6 +141,7 @@ class VToolLlama:
             log_info_fn=self._log_info,
             log_debug_fn=self._log_debug,
         )
+        self._scene_requested = False
 
         # ------------------------------------------------------------------
         # 7. Short memory (últimos N mensajes para contexto inmediato)
@@ -541,7 +542,17 @@ class VToolLlama:
                         yield {"choices": [{"message": {"tool_calls": handled["external_calls"]}}]}
                         return
 
-                    # --- Fallback: tool_calls en texto plano ---
+                    # --- Scene request detectado por StreamPostProcessor ---
+                    if self._scene_requested:
+                        self._scene_requested = False
+                        self._memory.add_assistant_message(content=None)
+                        self._memory.add_tool_message(
+                            content=scene_prompt,
+                            tool_call_id="scene_stream",
+                        )
+                        continue
+
+                    # --- Fallback: tool_calls en texto plano (ya procesados por StreamPP) ---
                     if not final_tool_calls:
                         text_handled = self._tool_manager.handle_text_calls(
                             full_response,
@@ -1776,12 +1787,21 @@ class VToolLlama:
         """
         Callback del StreamPostProcessor: ejecuta una tool detectada
         en el stream sin mostrarla al usuario.
+        Inyecta en el historial lo necesario para que el modelo
+        continue generando (escena, confirmacion, etc).
         """
-        execute_text_tool(
-            fn_name, fn_args,
-            add_memory_fn=self._character_manager.add_memory,
-            log_fn=self._log_info,
-        )
+        if fn_name in ("store_long_term_memory", "remember_memory"):
+            execute_text_tool(
+                fn_name, fn_args,
+                add_memory_fn=self._character_manager.add_memory,
+                log_fn=self._log_info,
+            )
+
+        elif fn_name in ("get_scene_state", "describe_scene"):
+            self._log_debug("TOOL", "Scene state solicitada via stream interceptor")
+            # Marcar para que el while loop continue y el modelo
+            # genere la descripcion con el contexto actualizado
+            self._scene_requested = True
 
     def _log_generation_stats(self) -> None:
         """Muestra estadísticas de la última generación si debug está activo."""
