@@ -78,6 +78,11 @@ class CharacterManager:
         # Hash del System Prompt (para invalidación de KV Cache)
         self._cached_prompt_hash: str = ""
 
+        # Flag de rebuild forzado — se pone True al agregar memoria,
+        # obliga a regenerar personality_plus_memory.state en la
+        # próxima oportunidad (load o chat)
+        self._needs_rebuild: bool = True
+
         # Compilador de Prompts
         self._compiler = CharacterCompiler(self)
 
@@ -95,6 +100,8 @@ class CharacterManager:
 
     def check_needs_rebuild(self, prompt: str) -> bool:
         import hashlib
+        if self._needs_rebuild:
+            return True
         current_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
         return current_hash != self._cached_prompt_hash
 
@@ -212,6 +219,10 @@ class CharacterManager:
         mem_file = self._char_dir / "memory" / "long_term.json"
         data = self._read_json_dict(mem_file)
         
+        # Leer flag de rebuild from long_term.json
+        # Si no existe (migración desde formato anterior), asumir True
+        self._needs_rebuild = data.get("rebuild", True)
+        
         raw_mems = data.get("memories", [])
         self.memories = [
             MemoryEntry(**{k: v for k, v in m.items() if k in MemoryEntry.__dataclass_fields__})
@@ -255,8 +266,10 @@ class CharacterManager:
         """Guarda Memory, State y Mods (el DNA es inmutable)."""
         if not self._char_dir: return
         with self._lock:
-            # Save Memory
+            # Save Memory — incluye flag rebuild para forzar
+            # regeneración del KV Cache en la próxima carga
             mem_data = {
+                "rebuild": self._needs_rebuild,
                 "memories": [asdict(m) for m in self.memories]
             }
             self._write_json(self._char_dir / "memory" / "long_term.json", mem_data)
@@ -278,8 +291,9 @@ class CharacterManager:
         with self._lock:
             import hashlib
             self._cached_prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+            self._needs_rebuild = False
             self.save_state()
-            self._log("CHAR", f"KV Cache Hash sincronizado ({self._cached_prompt_hash[:8]})")
+            self._log("CHAR", f"KV Cache sincronizado. Hash: {self._cached_prompt_hash[:8]}")
 
     # ------------------------------------------------------------------
     # Operaciones de Memoria y Mods
@@ -289,6 +303,7 @@ class CharacterManager:
         with self._lock:
             entry = MemoryEntry(content=content, priority=priority, always_include=always_include, tags=tags or [])
             self.memories.append(entry)
+            self._needs_rebuild = True
             self.save_state()
             self._log("CHAR", f"Memoria añadida: '{content[:50]}...'")
             return entry

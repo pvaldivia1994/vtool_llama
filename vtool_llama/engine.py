@@ -220,11 +220,14 @@ class VToolLlama:
         if slash_result is not None:
             return slash_result
 
+        # --- 2. Forzar rebuild del KV Cache si hay memorias nuevas ---
+        self._check_and_rebuild_if_needed()
+
         with self._lock:
-            # --- 2. Actualizar short memory ---
+            # --- 3. Actualizar short memory ---
             self._short_memory.append({"role": "user", "content": prompt})
 
-            # --- 3. Agregar mensaje del usuario al historial largo ---
+            # --- 4. Agregar mensaje del usuario al historial largo ---
             self._memory.add_user_message(prompt)
 
             # Auto-trim si está activado
@@ -385,17 +388,20 @@ class VToolLlama:
         
         active_tools = (tools or []) + internal_tools
 
+        # --- 2. Forzar rebuild del KV Cache si hay memorias nuevas ---
+        self._check_and_rebuild_if_needed()
+
         with self._lock:
-            # --- 2. Actualizar short memory ---
+            # --- 3. Actualizar short memory ---
             self._short_memory.append({"role": "user", "content": prompt})
 
-            # --- 3. Agregar mensaje del usuario al historial largo ---
+            # --- 4. Agregar mensaje del usuario al historial largo ---
             self._memory.add_user_message(prompt)
 
             # Auto-trim si está activado
             self._auto_trim_if_needed()
 
-            # --- 4. Inyectar personality state en system prompt ---
+            # --- 5. Inyectar personality state en system prompt ---
             self._inject_personality_into_system_prompt()
             
             loop_count = 0
@@ -1346,6 +1352,22 @@ class VToolLlama:
             self._stats.end_generation(
                 model_name=self._model_manager.model_info.model_name,
             )
+
+    def _check_and_rebuild_if_needed(self) -> None:
+        """
+        Si el flag _needs_rebuild está activo (por agregar memoria,
+        cambiar mods, etc.), regenera el KV Cache antes del próximo chat.
+        """
+        if not self._character_manager.is_loaded or not self._model_manager.is_loaded:
+            return
+        char_dir = self._character_manager._char_dir
+        if not char_dir:
+            return
+        prompt = self._character_manager.build_system_prompt(self._config.system_prompt)
+        if self._character_manager.check_needs_rebuild(prompt):
+            self._log_debug("STATE", "Rebuild pendiente — regenerando KV Cache antes del chat...")
+            self._warmup_character_cache(prompt)
+            self._log_debug("STATE", "KV Cache regenerado.")
 
     def _auto_trim_if_needed(self) -> None:
         """
