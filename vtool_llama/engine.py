@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 from collections import deque
 from pathlib import Path
@@ -301,6 +302,23 @@ class VToolLlama:
                                 self._short_memory.append({"role": "assistant", "content": "(Llama a herramienta externa)"})
                                 return msg_choice
 
+                    # --- Fallback: parser de tool_calls en texto plano ---
+                    # Algunos modelos GGUF no soportan function calling nativo
+                    # y escriben {{remember_memory{content: "..."}} como texto.
+                    if not tool_calls and not memory_saved:
+                        text_tools = self._parse_text_tool_calls(response_text)
+                        if text_tools:
+                            for fn_name, fn_args in text_tools:
+                                if fn_name == "remember_memory":
+                                    mem_content = fn_args.get("content", "")
+                                    if mem_content:
+                                        self.add_memory(mem_content, priority=1.0)
+                                        self._log_info(f"🧠 [Auto-Tool/Texto] Memoria guardada: {mem_content}")
+                                        memory_saved = True
+                            if memory_saved:
+                                response_text = self._strip_text_tool_calls(response_text)
+                                continue
+
                     # Respuesta normal de texto (sin tool_calls o internas ya resueltas)
                     if memory_saved:
                         char_name = self._character_manager.character_name.capitalize() if self._character_manager.character_name else "El personaje"
@@ -482,6 +500,19 @@ class VToolLlama:
                                 yield {"choices": [{"message": {"tool_calls": valid_tool_calls}}]}
                                 return
 
+                    # --- Fallback: parser de tool_calls en texto plano ---
+                    if not final_tool_calls:
+                        text_tools = self._parse_text_tool_calls(full_response)
+                        for fn_name, fn_args in text_tools:
+                            if fn_name == "remember_memory":
+                                mem_content = fn_args.get("content", "")
+                                if mem_content:
+                                    self.add_memory(mem_content, priority=1.0)
+                                    self._log_info(f"🧠 [Auto-Tool/Texto] Memoria guardada en stream: {mem_content}")
+
+                        if text_tools:
+                            full_response = self._strip_text_tool_calls(full_response)
+
                     # Final de respuesta textual
                     self._memory.add_assistant_message(content=full_response or None, tool_calls=None)
                     if full_response:
@@ -515,6 +546,42 @@ class VToolLlama:
                     if "arguments" in fn and fn["arguments"]:
                         tool_calls_map[idx]["function"]["arguments"] += fn["arguments"]
         return list(tool_calls_map.values())
+
+    # ------------------------------------------------------------------
+    # Parser de tool_calls en texto plano
+    # ------------------------------------------------------------------
+    # Algunos modelos GGUF no soportan function calling nativo de OpenAI
+    # y escriben tool calls como texto: {{remember_memory{content: "..."}}}
+    # Estas funciones detectan ese patrón, lo ejecutan, y limpian el texto.
+    # ------------------------------------------------------------------
+
+    _TEXT_TOOL_RE = re.compile(r'\{\{(\w+)\{([^}]+)\}\}')
+
+    def _parse_text_tool_calls(self, text: str) -> list[tuple[str, dict]]:
+        """
+        Busca patrones {{tool_name{key: "val", key: "val"}}} en el texto
+        y retorna [(nombre, {args_dict}), ...].
+        Si no encuentra nada, retorna lista vacía.
+        """
+        results = []
+        for match in self._TEXT_TOOL_RE.finditer(text):
+            fn_name = match.group(1)
+            args_text = match.group(2)
+            args = {}
+            for kv in args_text.split(","):
+                kv = kv.strip()
+                if ":" in kv:
+                    key, _, val = kv.partition(":")
+                    key = key.strip()
+                    val = val.strip().strip('"').strip("'")
+                    if key:
+                        args[key] = val
+            results.append((fn_name, args))
+        return results
+
+    def _strip_text_tool_calls(self, text: str) -> str:
+        """Elimina del texto los patrones {{...}} de tool calls."""
+        return self._TEXT_TOOL_RE.sub("", text).strip()
 
     def chat_with_thinking(
         self,
@@ -912,8 +979,10 @@ class VToolLlama:
         system_prompt = (
             "Eres un experto diseñador de personajes y escritor creativo. "
             "Tu tarea es crear un perfil de personaje rico y detallado basado en la solicitud del usuario.\n"
-            "DEBES responder ÚNICAMENTE con un objeto JSON válido, sin Markdown, sin explicaciones, solo el JSON puro.\n\n"
-            "El JSON DEBE tener esta estructura exacta:\n"
+            "DEBES responder ÚNICAMENTE con un objeto JSON válido, sin Markdown, sin explicaciones, solo el JSON puro.\n"
+            "NO agregues campos adicionales ni cambies los nombres de los campos existentes. "
+            "Usa EXACTAMENTE los nombres de clave que aparecen en la estructura de abajo.\n\n"
+            "El JSON DEBE tener esta estructura exacta (sin campos extra):\n"
             "{\n"
             '  "identity": {\n'
             '    "name": "Nombre público",\n'
