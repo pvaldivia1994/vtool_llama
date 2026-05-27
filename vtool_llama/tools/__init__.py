@@ -6,6 +6,7 @@ Exporta:
   - TEXT_TOOL_RE, find_tool_pattern_start
   - parse_text_tool_calls, strip_text_tool_calls
   - execute_text_tool, is_internal_tool
+  - ToolExecutionManager, has_memory_trigger, has_scene_trigger
 """
 
 from .definitions import INTERNAL_TOOLS, TOOL_USAGE_POLICY, SCENE_SYSTEM_COMMAND
@@ -17,6 +18,7 @@ from .parser import (
     execute_text_tool,
     is_internal_tool,
 )
+from .manager import ToolExecutionManager, has_memory_trigger, has_scene_trigger
 
 __all__ = [
     "INTERNAL_TOOLS",
@@ -28,4 +30,7 @@ __all__ = [
     "strip_text_tool_calls",
     "execute_text_tool",
     "is_internal_tool",
+    "ToolExecutionManager",
+    "has_memory_trigger",
+    "has_scene_trigger",
 ]

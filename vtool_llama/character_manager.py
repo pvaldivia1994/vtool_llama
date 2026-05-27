@@ -78,6 +78,10 @@ class CharacterManager:
         # Hash del System Prompt (para invalidación de KV Cache)
         self._cached_prompt_hash: str = ""
 
+        # Prompt cache — evita recompilar en cada chat()
+        self._prompt_dirty: bool = True
+        self._compiled_prompt_cache: str = ""
+
         # Flag de rebuild forzado — se pone True al agregar memoria,
         # obliga a regenerar personality_plus_memory.state en la
         # próxima oportunidad (load o chat)
@@ -131,6 +135,7 @@ class CharacterManager:
 
             self._character_name = name
             self._char_dir = char_dir
+            self._prompt_dirty = True
             
             # Crear estructura si falta algo
             self._ensure_dir(self._char_dir / "memory")
@@ -304,6 +309,7 @@ class CharacterManager:
             entry = MemoryEntry(content=content, priority=priority, always_include=always_include, tags=tags or [])
             self.memories.append(entry)
             self._needs_rebuild = True
+            self._prompt_dirty = True
             self.save_state()
             self._log("CHAR", f"Memoria añadida: '{content[:50]}...'")
             return entry
@@ -311,6 +317,7 @@ class CharacterManager:
     def set_mod(self, mod: CharacterMod) -> None:
         with self._lock:
             self.active_mods[mod.id] = mod
+            self._prompt_dirty = True
             self.save_state()
             self._log("CHAR", f"Mod aplicado: {mod.id}")
 
@@ -318,6 +325,7 @@ class CharacterManager:
         with self._lock:
             if mod_id in self.active_mods:
                 del self.active_mods[mod_id]
+                self._prompt_dirty = True
                 self.save_state()
 
     # ------------------------------------------------------------------
@@ -375,12 +383,8 @@ class CharacterManager:
                 summary=summary,
                 messages=messages,
             )
-            
-            filename = f"episode_{next_id:03d}.json"
-            from dataclasses import asdict
-            self._write_json(episodes_dir / filename, asdict(episode))
-            
             self.current_episode = episode
+            self._prompt_dirty = True
             self._log("EPISODE", f"Episodio #{next_id} guardado ({filename})")
             return episode
 
@@ -421,6 +425,7 @@ class CharacterManager:
             summary=data.get("summary", ""),
             messages=data.get("messages", []),
         )
+        self._prompt_dirty = True
         self._log("EPISODE", f"Episodio #{episode_id} restaurado (rollback).")
 
     def delete_episode(self, episode_id: int) -> bool:
@@ -452,8 +457,19 @@ class CharacterManager:
         """
         Ensambla el system prompt combinando DNA, State, Memory y Mods
         a través del CharacterCompiler v2.
+
+        Usa cache interno: solo recompila si _prompt_dirty=True.
         """
-        return self._compiler.compile_prompt(base_system_prompt)
+        if not self._prompt_dirty and self._compiled_prompt_cache:
+            return self._compiled_prompt_cache
+
+        self._compiled_prompt_cache = self._compiler.compile_prompt(base_system_prompt)
+        self._prompt_dirty = False
+        return self._compiled_prompt_cache
+
+    def mark_prompt_dirty(self) -> None:
+        """Marca el prompt cache como sucio para forzar recompilación."""
+        self._prompt_dirty = True
 
     def build_base_system_prompt(self, base_system_prompt: str) -> str:
         """

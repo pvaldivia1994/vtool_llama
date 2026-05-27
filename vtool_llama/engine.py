@@ -49,9 +49,13 @@ from .types import ConfigSchema, EpisodeSnapshot, GenerationStats, ModelInfo, Pe
 from .tools import (
     INTERNAL_TOOLS,
     SCENE_SYSTEM_COMMAND,
+    TOOL_USAGE_POLICY,
+    ToolExecutionManager,
     parse_text_tool_calls,
     strip_text_tool_calls,
     execute_text_tool,
+    has_memory_trigger,
+    has_scene_trigger,
 )
 
 
@@ -129,6 +133,15 @@ class VToolLlama:
         )
 
         # ------------------------------------------------------------------
+        # 6b. Inicializar Tool Execution Manager
+        # ------------------------------------------------------------------
+        self._tool_manager = ToolExecutionManager(
+            add_memory_fn=self._character_manager.add_memory,
+            log_info_fn=self._log_info,
+            log_debug_fn=self._log_debug,
+        )
+
+        # ------------------------------------------------------------------
         # 7. Short memory (últimos N mensajes para contexto inmediato)
         # ------------------------------------------------------------------
         self._short_memory: deque[dict] = deque(
@@ -201,7 +214,7 @@ class VToolLlama:
         active_tools = (tools or []) + internal_tools
 
         # --- 1. Interceptar slash commands ---
-        scene_prompt = SCENE_PROMPT
+        scene_prompt = SCENE_SYSTEM_COMMAND
         if prompt.strip().lower() == "/scene_view":
             prompt = scene_prompt
             slash_result = None
@@ -266,81 +279,80 @@ class VToolLlama:
                     tool_calls = msg_choice.get("tool_calls", None)
 
                     self._record_stats(result)
-                    
-                    if tool_calls:
-                        # Identificar si es una tool interna (Auto-Tool)
-                        internal_call_found = False
-                        for tc in tool_calls:
-                            fn_name = tc.get("function", {}).get("name", "")
-                            if fn_name == "remember_memory":
-                                internal_call_found = True
-                                try:
-                                    args = json.loads(tc.get("function", {}).get("arguments", "{}"))
-                                    mem_content = args.get("content", "")
-                                    if mem_content:
-                                        self.add_memory(mem_content, priority=1.0)
-                                        self._log_info(f"🧠 [Auto-Tool] Memoria guardada automáticamente: {mem_content}")
-                                        memory_saved = True
-                                        self._memory.add_assistant_message(content=None, tool_calls=[tc])
-                                        self._memory.add_tool_message(content="Memoria guardada exitosamente. Ahora respondele al usuario.", tool_call_id=tc.get("id", ""))
-                                except Exception as e:
-                                    self._log_warning(f"Fallo al ejecutar remember_memory: {e}")
 
-                            elif fn_name == "describe_scene":
-                                internal_call_found = True
-                                self._log_info(f"🎬 [Auto-Tool] Descripción de escena solicitada")
+                    # --- Manejar tool_calls estructurados (OpenAI format) ---
+                    handled = self._tool_manager.handle_structured_calls(
+                        tool_calls or [],
+                        scene_prompt,
+                        tools,
+                    )
+                    if handled["internal_found"]:
+                        # Agregar tool_call + respuesta al historial para continuar el bucle
+                        for tc in (tool_calls or []):
+                            fn_name = tc.get("function", {}).get("name", "")
+                            if fn_name in ("store_long_term_memory", "remember_memory"):
+                                self._memory.add_assistant_message(content=None, tool_calls=[tc])
+                                self._memory.add_tool_message(
+                                    content="Memoria guardada. Ahora respondele al usuario.",
+                                    tool_call_id=tc.get("id", ""),
+                                )
+                            elif fn_name in ("get_scene_state", "describe_scene"):
                                 self._memory.add_assistant_message(content=None, tool_calls=[tc])
                                 self._memory.add_tool_message(
                                     content=scene_prompt,
                                     tool_call_id=tc.get("id", ""),
                                 )
+                        if handled["memory_saved"]:
+                            memory_saved = True
+                        continue
 
-                        if internal_call_found:
-                            # Re-evaluar el bucle para que el modelo genere la respuesta de texto
-                            continue
+                    # --- Fallback: tool_calls externas ---
+                    if handled["external_calls"]:
+                        self._memory.add_assistant_message(content=response_text, tool_calls=handled["external_calls"])
+                        self._short_memory.append({"role": "assistant", "content": "(Llama a herramienta externa)"})
+                        return msg_choice
 
-                        # Si no es interna, validar contra las tools del usuario
-                        if tools:
-                            valid_tool_calls = self._validate_tool_calls(tool_calls, tools)
-                            if valid_tool_calls:
-                                self._memory.add_assistant_message(content=response_text, tool_calls=valid_tool_calls)
-                                self._short_memory.append({"role": "assistant", "content": "(Llama a herramienta externa)"})
-                                return msg_choice
-
-                    # --- Fallback: parser de tool_calls en texto plano ---
-                    # Algunos modelos GGUF escriben tool calls como texto
-                    # en vez de usar el formato OpenAI estructurado:
-                    #   {{remember_memory{content: "..."}}}
-                    #   {{get_weather{location: "Madrid"}}}
+                    # --- Fallback: tool_calls en texto plano ---
                     if not tool_calls and not memory_saved:
-                        text_tools = parse_text_tool_calls(response_text)
-                        if text_tools:
-                            internal_call_found = False
-                            external_calls = []
-                            for fn_name, fn_args in text_tools:
-                                if fn_name == "remember_memory":
-                                    mem_content = fn_args.get("content", "")
-                                    if mem_content:
-                                        self.add_memory(mem_content, priority=1.0)
-                                        self._log_info(f"🧠 [Auto-Tool/Texto] Memoria guardada: {mem_content}")
-                                        memory_saved = True
-                                        internal_call_found = True
-                                elif fn_name == "describe_scene":
-                                    self._log_info(f"🎬 [Auto-Tool/Texto] Descripción de escena solicitada")
-                                    internal_call_found = True
-                                else:
-                                    external_calls.append({
-                                        "function": {"name": fn_name, "arguments": json.dumps(fn_args)}
-                                    })
-                            response_text = strip_text_tool_calls(response_text)
-                            if internal_call_found:
+                        text_handled = self._tool_manager.handle_text_calls(
+                            response_text,
+                            scene_prompt,
+                            tools,
+                        )
+                        if text_handled["internal_found"]:
+                            response_text = text_handled["cleaned_text"]
+                            if text_handled["memory_saved"]:
+                                memory_saved = True
+                            continue
+                        if text_handled["external_calls"]:
+                            self._memory.add_assistant_message(content=response_text, tool_calls=text_handled["external_calls"])
+                            self._short_memory.append({"role": "assistant", "content": "(Llama a herramienta externa)"})
+                            return msg_choice
+
+                    # --- Coercion retry: si el modelo debio usar tool y no lo hizo ---
+                    if self._tool_manager.needs_tool_coercion(prompt, response_text, bool(tool_calls), False):
+                        coercion = self._tool_manager.build_coercion_prompt(prompt)
+                        if coercion:
+                            self._log_debug("TOOL", f"Coercion retry: {coercion[:60]}...")
+                            # Re-prompt de coercion con temperature baja
+                            coerce_result = self._model_manager.generate(
+                                messages=messages + [{"role": "user", "content": coercion}],
+                                stream=False,
+                                max_tokens=100,
+                                temperature=0.2,
+                                top_p=0.9,
+                                tools=active_tools,
+                                tool_choice="auto",
+                            )
+                            coerce_choice = coerce_result["choices"][0]["message"]
+                            coerce_tools = coerce_choice.get("tool_calls", None)
+                            if coerce_tools:
+                                # Reemplazar response_text con el resultado de la coercion
+                                result = coerce_result
+                                msg_choice = coerce_choice
+                                response_text = coerce_choice.get("content") or ""
+                                tool_calls = coerce_tools
                                 continue
-                            if external_calls and tools:
-                                valid = self._validate_tool_calls(external_calls, tools)
-                                if valid:
-                                    self._memory.add_assistant_message(content=response_text, tool_calls=valid)
-                                    self._short_memory.append({"role": "assistant", "content": "(Llama a herramienta externa)"})
-                                    return {"choices": [{"message": {"tool_calls": valid}}]}
 
                     # Respuesta normal de texto (sin tool_calls o internas ya resueltas)
                     if memory_saved:
@@ -395,7 +407,7 @@ class VToolLlama:
         """
         self._validate_prompt(prompt)
 
-        scene_prompt = SCENE_PROMPT
+        scene_prompt = SCENE_SYSTEM_COMMAND
 
         # --- 1. Interceptar slash commands ---
         if prompt.strip().lower() == "/scene_view":
@@ -487,71 +499,50 @@ class VToolLlama:
                         final_tool_calls = self._reconstruct_tool_calls(tool_calls_chunks)
 
                     self._record_stats_from_stream(stream, full_response)
-                    
-                    if final_tool_calls:
-                        internal_call_found = False
-                        for tc in final_tool_calls:
-                            fn_name = tc.get("function", {}).get("name", "")
-                            if fn_name == "remember_memory":
-                                internal_call_found = True
-                                try:
-                                    args = json.loads(tc.get("function", {}).get("arguments", "{}"))
-                                    mem_content = args.get("content", "")
-                                    if mem_content:
-                                        self.add_memory(mem_content, priority=1.0)
-                                        self._log_info(f"🧠 [Auto-Tool] Memoria guardada automáticamente: {mem_content}")
-                                        char_name = self._character_manager.character_name.capitalize() if self._character_manager.character_name else "El personaje"
-                                        yield f"\n** {char_name} recordará esto **\n\n"
-                                        
-                                        self._memory.add_assistant_message(content=None, tool_calls=[tc])
-                                        self._memory.add_tool_message(content="Memoria guardada exitosamente. Continua tu respuesta ahora.", tool_call_id=tc.get("id", ""))
-                                except Exception as e:
-                                    self._log_warning(f"Fallo al ejecutar remember_memory en stream: {e}")
 
-                            elif fn_name == "describe_scene":
-                                internal_call_found = True
-                                self._log_info(f"🎬 [Auto-Tool] Descripción de escena solicitada en stream")
+                    # --- Manejar tool_calls estructurados (OpenAI format) ---
+                    handled = self._tool_manager.handle_structured_calls(
+                        final_tool_calls or [],
+                        scene_prompt,
+                        tools,
+                    )
+                    if handled["internal_found"]:
+                        for tc in (final_tool_calls or []):
+                            fn_name = tc.get("function", {}).get("name", "")
+                            if fn_name in ("store_long_term_memory", "remember_memory"):
+                                char_name = self._character_manager.character_name.capitalize() if self._character_manager.character_name else "El personaje"
+                                yield f"\n** {char_name} recordará esto **\n\n"
+                                self._memory.add_assistant_message(content=None, tool_calls=[tc])
+                                self._memory.add_tool_message(content="Memoria guardada. Continua tu respuesta.", tool_call_id=tc.get("id", ""))
+                            elif fn_name in ("get_scene_state", "describe_scene"):
                                 self._memory.add_assistant_message(content=None, tool_calls=[tc])
                                 self._memory.add_tool_message(
                                     content=scene_prompt,
                                     tool_call_id=tc.get("id", ""),
                                 )
-                                    
-                        if internal_call_found:
-                            continue # Re-iniciar bucle de streaming para generar el texto de confirmación
-                            
-                        # Si es herramienta externa
-                        if tools:
-                            valid_tool_calls = self._validate_tool_calls(final_tool_calls, tools)
-                            if valid_tool_calls:
-                                self._memory.add_assistant_message(content=full_response or None, tool_calls=valid_tool_calls)
-                                # Para streaming, yield del objeto simulado de tool call final
-                                yield {"choices": [{"message": {"tool_calls": valid_tool_calls}}]}
-                                return
+                        continue
 
-                    # --- Fallback: parser de tool_calls en texto plano ---
+                    if handled["external_calls"]:
+                        self._memory.add_assistant_message(content=full_response or None, tool_calls=handled["external_calls"])
+                        yield {"choices": [{"message": {"tool_calls": handled["external_calls"]}}]}
+                        return
+
+                    # --- Fallback: tool_calls en texto plano ---
                     if not final_tool_calls:
-                        text_tools = parse_text_tool_calls(full_response)
-                        if text_tools:
-                            for fn_name, fn_args in text_tools:
-                                if fn_name == "remember_memory":
-                                    mem_content = fn_args.get("content", "")
-                                    if mem_content:
-                                        self.add_memory(mem_content, priority=1.0)
-                                        self._log_info(f"🧠 [Auto-Tool/Texto] Memoria guardada en stream: {mem_content}")
-                                        char_name = self._character_manager.character_name.capitalize() if self._character_manager.character_name else "El personaje"
-                                        yield f"\n** {char_name} recordará esto **\n\n"
-                                elif fn_name == "describe_scene":
-                                    self._log_info(f"🎬 [Auto-Tool/Texto] Descripción de escena solicitada en stream")
-                                elif tools:
-                                    # Tool externa en texto plano → devolver como si fuera real
-                                    tc = {"function": {"name": fn_name, "arguments": json.dumps(fn_args)}}
-                                    valid = self._validate_tool_calls([tc], tools)
-                                    if valid:
-                                        self._memory.add_assistant_message(content=None, tool_calls=valid)
-                                        yield {"choices": [{"message": {"tool_calls": valid}}]}
-                                        return
-                            full_response = strip_text_tool_calls(full_response)
+                        text_handled = self._tool_manager.handle_text_calls(
+                            full_response,
+                            scene_prompt,
+                            tools,
+                        )
+                        if text_handled["memory_saved"]:
+                            char_name = self._character_manager.character_name.capitalize() if self._character_manager.character_name else "El personaje"
+                            yield f"\n** {char_name} recordará esto **\n\n"
+                        full_response = text_handled["cleaned_text"]
+
+                        if text_handled["external_calls"]:
+                            self._memory.add_assistant_message(content=None, tool_calls=text_handled["external_calls"])
+                            yield {"choices": [{"message": {"tool_calls": text_handled["external_calls"]}}]}
+                            return
 
                     # Final de respuesta textual
                     self._memory.add_assistant_message(content=full_response or None, tool_calls=None)
@@ -825,6 +816,7 @@ class VToolLlama:
         with self._lock:
             self._memory.system_prompt = prompt
             self._config.system_prompt = prompt
+            self._character_manager._prompt_dirty = True
         self._log_debug("CONFIG", f"System prompt actualizado: {prompt[:50]}...")
 
     # ======================================================================
@@ -1200,6 +1192,7 @@ class VToolLlama:
 
             # Guardar el state en disco
             self._character_manager.save_state()
+            self._character_manager._prompt_dirty = True
             
             # Generar el nuevo KV Cache con la memoria consolidada
             self._warmup_character_cache()
@@ -1486,11 +1479,17 @@ class VToolLlama:
         """
         Construye el system prompt final combinando el prompt base
         del config con las capas de personalidad del CharacterManager,
-        y lo inyecta en la ChatMemory.
+        las policy de tools, y lo inyecta en la ChatMemory.
         """
         enriched_prompt = self._character_manager.build_system_prompt(
             self._config.system_prompt
         )
+
+        # Inyectar TOOL_USAGE_POLICY solo cuando hay un personaje cargado
+        # para que el modelo entienda cuando usar store_long_term_memory
+        if self._character_manager.is_loaded:
+            enriched_prompt += "\n\n" + TOOL_USAGE_POLICY
+
         # Solo actualizar si realmente cambió para evitar trabajo innecesario
         if self._memory.system_prompt != enriched_prompt:
             self._memory.system_prompt = enriched_prompt
