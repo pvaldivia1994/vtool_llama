@@ -16,7 +16,7 @@ Este documento sirve como especificación técnica y guía de referencia ("skill
 vtool_llama/
 ├── __init__.py              # Exporta la API pública
 ├── engine.py                # VToolLlama (orquestador principal)
-├── character_manager.py     # Capas del Character OS
+├── character_manager.py     # Capas del Character OS + prompt cache
 ├── character_compiler.py    # Compilador de prompts (MODS > STATE > DNA)
 ├── chat_memory.py           # Historial de conversación (OpenAI format)
 ├── config_manager.py        # Carga/validación de config.json
@@ -27,6 +27,13 @@ vtool_llama/
 ├── stats_manager.py         # Estadísticas de rendimiento
 ├── tokenizer_utils.py       # Tokenización y estimación de contexto
 ├── types.py                 # Dataclasses (DNA, State, Mods, Config, etc.)
+│
+├── tools/                   # Sistema de herramientas internas
+│   ├── __init__.py          # Exporta la API de tools
+│   ├── definitions.py      # INTERNAL_TOOLS, TOOL_USAGE_POLICY, SCENE_SYSTEM_COMMAND
+│   ├── parser.py           # TEXT_TOOL_RE, parse, strip, execute
+│   ├── manager.py          # ToolExecutionManager (razoning loop, coercion)
+│   └── stream_processor.py # StreamPostProcessor (interceptor streaming)
 │
 ├── config/config.json       # Configuración de la librería
 ├── personajes/              # Perfiles de personajes
@@ -104,9 +111,9 @@ Si el hash no cambió, la carga es instantánea (~0.2s). Si cambió, solo se rec
 - `tools`: lista de definiciones de herramientas (formato OpenAI)
 - `tool_choice`: control de selección (`"auto"`, `"none"`, o nombre específico)
 
-#### Auto-Tools: `remember_memory`
+#### Auto-Tools: `store_long_term_memory`
 
-El motor inyecta automáticamente una herramienta interna `remember_memory` en cada llamada. Cuando el modelo decide usarla, la memoria se guarda en `long_term.json` sin intervención del usuario y el bucle de razonamiento continúa para generar la respuesta textual. Límite: 3 iteraciones para evitar loops infinitos.
+El motor inyecta automáticamente una herramienta interna `store_long_term_memory` en cada llamada. Cuando el modelo decide usarla, la memoria se guarda en `long_term.json` sin intervención del usuario y el bucle de razonamiento continúa para generar la respuesta textual. Límite: 3 iteraciones para evitar loops infinitos.
 
 ### C. Sistema de Memoria y Estado
 

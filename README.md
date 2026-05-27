@@ -239,6 +239,13 @@ vtool_llama/
 ├── tokenizer_utils.py       # Tokenización y estimación de contexto
 ├── types.py                 # Dataclasses (DNA, State, Mods, Config)
 │
+├── tools/                   # Sistema de herramientas internas
+│   ├── __init__.py          # Exporta la API de tools
+│   ├── definitions.py      # INTERNAL_TOOLS, TOOL_USAGE_POLICY, SCENE_SYSTEM_COMMAND
+│   ├── parser.py           # TEXT_TOOL_RE, parse, strip, execute
+│   ├── manager.py          # ToolExecutionManager (razoning loop, coercion)
+│   └── stream_processor.py # StreamPostProcessor (interceptor streaming)
+│
 ├── config/
 │   └── config.json          # Configuración de la librería
 │
@@ -260,7 +267,7 @@ vtool_llama/
 - **KV Cache Dual con Inferencia Diferencial**: Reutiliza estados compilados (DNA) y calcula solo los tokens nuevos. ~0.2s de carga en caliente con invalidación criptográfica SHA-256.
 - **Character Compiler v2**: Compila el prompt dinámicamente con prioridad MODS > STATE > DNA. Los Mods sobreescriben cualquier capa sin modificar archivos originales.
 - **Memoria Episódica (Short-Term Versionada)**: Snapshot `episode_NNN.json` con resumen LLM que permite rollback y continuidad entre sesiones.
-- **Auto-Tools (Reasoning Loop)**: Inyecta `remember_memory` silenciosamente. El modelo guarda datos en `long_term.json` sin romper el diálogo. Límite de 3 iteraciones anti-loop.
+- **Auto-Tools (Reasoning Loop)**: Inyecta `store_long_term_memory` silenciosamente. El modelo guarda datos en `long_term.json` sin romper el diálogo. Límite de 3 iteraciones anti-loop.
 - **AI Character Generator**: El LLM genera el DNA completo (identidad, personalidad, habla, reglas, memorias) desde un prompt descriptivo.
 - **Relationship Engine**: Confianza y familiaridad persistente (0.0 a 1.0) que modifica la actitud del personaje en tiempo real.
 - **Thinking Mode**: Soporte nativo para `reasoning_content` de DeepSeek-R1 y parseo de etiquetas `<think>` en streaming.
