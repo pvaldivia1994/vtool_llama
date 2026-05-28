@@ -37,8 +37,8 @@ from .exceptions import (
     OOMError,
     VToolLlamaError,
 )
-from .slash_commands import SlashCommandRegistry
-from .character_manager import CharacterManager
+from .engine.slash_registry import SlashCommandRegistry
+from .character import CharacterManager
 from .types import (
     ConfigSchema,
     GenerationStats,
@@ -65,8 +65,8 @@ from .types import (
     PersonaState,
     DriftEntry,
 )
-from .soul_generator import SoulGenerator, RuntimeSoulAccessor
-from .psychology_engine import (
+from .soul import SoulGenerator, RuntimeSoulAccessor
+from .psychology import (
     PsychologySynthesizer,
     EmotionalDynamics,
     DriftDetector,

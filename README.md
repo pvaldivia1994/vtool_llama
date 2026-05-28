@@ -4,8 +4,6 @@
 
 Motor modular, reutilizable y listo para producción que permite usar modelos GGUF locales (Llama, Qwen, Gemma, Mistral, DeepSeek, etc.) mediante `llama-cpp-python`.
 
-En su versión **0.3.0**, `vtool_llama` introduce una **arquitectura psicológica completa** de 4 capas: **Genome → Soul → Psychology → Persona → Prompt**. El personaje ya no nace con personalidad fija: la personalidad **emerge** de la interacción entre temperamento innato (Genome), vida simulada (Soul), estado psicológico sintetizado (Psychology) y capa de expresión dinámica (Persona).
-
 ## Filosofía
 
 vtool_llama **no es una aplicación de consola**. Es una **librería/framework** diseñada para integrarse como dependencia dentro de proyectos Python mayores.
@@ -75,7 +73,23 @@ for token in llm.stream_chat("Explícame Python"):
     print(token, end="")
 ```
 
-## Arquitectura (v0.3.0)
+## Arquitectura
+
+La librería está organizada en **9 subpackages** por dominio, cada uno con su propia documentación:
+
+| Subpackage | Propósito | Documentación |
+|-----------|-----------|---------------|
+| `engine/` | Núcleo: VToolLlama, chat, streaming, configuración, logging | `engine/AGENT.md` |
+| `model/` | ModelManager: carga, inferencia, GPU, KV Cache | `model/AGENT.md` |
+| `soul/` | Soul System: generación de vida simulada | `soul/AGENT.md` |
+| `psychology/` | Psychology Engine v2: psicología runtime emergente | `psychology/AGENT.md` |
+| `character/` | CharacterManager: carga, persistencia, episodios | `character/AGENT.md` |
+| `compiler/` | CharacterCompiler: ensamblado del system prompt | `compiler/AGENT.md` |
+| `tools/` | Tool system: function calling, parseo, ejecución | `tools/AGENT.md` |
+| `types/` | Dataclasses compartidas por dominio | `types/AGENT.md` |
+| `db/` | ChromaDB wrapper + file I/O utilities | `db/AGENT.md` |
+
+### Pipeline psicológico (v0.3.0)
 
 ```
 Genome (13 ejes de temperamento innato)
@@ -83,7 +97,7 @@ Genome (13 ejes de temperamento innato)
     → Soul (vida simulada con impactos psicológicos numéricos)
       → Psychology (Big Five + apego + necesidades + heridas + worldview)
         → Persona (sarcasmo, calidez, verborrea, humor — derivados, no fijos)
-          → Prompt (9 capas compiladas para el LLM)
+          → Prompt (27 capas compiladas para el LLM)
 ```
 
 ### Mecanismos runtime
@@ -94,7 +108,7 @@ Genome (13 ejes de temperamento innato)
 - **Interpretation Engine**: el mismo evento produce distinta reacción según CoreIdentity (internaliza vs externaliza culpa, catastrofiza o minimiza)
 - **Memory Distortion**: los recuerdos se deforman con el tiempo (original ≠ versión recordada)
 
-## API completa (v0.3.0)
+## API completa
 
 ### Chat
 
@@ -106,7 +120,7 @@ Genome (13 ejes de temperamento innato)
 | `stream_chat_with_thinking(prompt, **kwargs)` | Streaming de tuplas `(tipo, token)` |
 | `add_tool_message(content, tool_call_id)` | Registra respuesta de herramienta externa |
 
-### Soul System (nuevo en v0.3.0)
+### Soul System
 
 | Método | Descripción |
 |--------|-------------|
@@ -213,10 +227,10 @@ Genome (13 ejes de temperamento innato)
 }
 ```
 
-## Estructura de archivos por personaje (v0.3.0)
+## Estructura de archivos por personaje
 
 ```
-personajes/<nombre>/
+characters/<nombre>/
 ├── genome.json                        ← 13 ejes de temperamento innato (opcional)
 ├── dna/
 │   ├── identity.json
@@ -236,6 +250,7 @@ personajes/<nombre>/
 │   ├── chat_history/                  ← Historial de chat vectorial en ChromaDB (embeddings)
 │   ├── episodes/
 │   ├── base.state
+│   ├── base_soul.state
 │   └── personality_plus_memory.state
 ├── state/
 │   ├── runtime_state.json
@@ -263,6 +278,7 @@ personajes/<nombre>/
 - **KV Cache Dual**: inferencia diferencial con ~0.2s de carga en caliente.
 - **Thinking Mode**: soporte nativo para `reasoning_content` de DeepSeek-R1 y parseo de etiquetas `<think>`.
 - **Tool Calling con Validación**: filtra alucinaciones de nombres automáticamente.
+- **Arquitectura modular**: 9 subpackages con documentación interna (`AGENT.md` + `DETA.md`) para navegación y mantenimiento.
 
 ## Licencia
 
