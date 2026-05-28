@@ -23,7 +23,8 @@ orjson>=3.9.0
 # Colores en terminal Windows
 colorama>=0.4.6
 
-# Tablas y formato rich para debug
+# Base de datos vectorial para vida simulada (Soul System)
+chromadb>=0.4.0
 
 # =============================================================================
 # Dependencias opcionales (para desarrollo / ejemplos)

@@ -4,7 +4,7 @@
 
 Motor modular, reutilizable y listo para producción que permite usar modelos GGUF locales (Llama, Qwen, Gemma, Mistral, DeepSeek, etc.) mediante `llama-cpp-python`.
 
-En su versión **0.2.2**, `vtool_llama` introduce un **Character Operating System**, convirtiéndose en un framework avanzado para crear compañeros virtuales y agentes autónomos con memoria híbrida, personalidad modular por capas (DNA, Memory, State, Mods), motor de relaciones y comandos de bajo nivel.
+En su versión **0.3.0**, `vtool_llama` introduce una **arquitectura psicológica completa** de 4 capas: **Genome → Soul → Psychology → Persona → Prompt**. El personaje ya no nace con personalidad fija: la personalidad **emerge** de la interacción entre temperamento innato (Genome), vida simulada (Soul), estado psicológico sintetizado (Psychology) y capa de expresión dinámica (Persona).
 
 ## Filosofía
 
@@ -28,8 +28,6 @@ ProyectoPrincipal/
 
 ## Instalación y Configuración de CUDA
 
-Para lograr respuestas rápidas utilizando la GPU de tu tarjeta NVIDIA, sigue estos pasos:
-
 ### 1. Instalar el CUDA Toolkit de NVIDIA
 1. Descarga el instalador oficial de **CUDA Toolkit** (versión recomendada **12.1** o **12.4**):
    * [Descargas de NVIDIA CUDA Toolkit Archive](https://developer.nvidia.com/cuda-downloads)
@@ -42,7 +40,6 @@ Para lograr respuestas rápidas utilizando la GPU de tu tarjeta NVIDIA, sigue es
    Debería mostrar la versión del compilador CUDA de NVIDIA.
 
 ### 2. Instalar dependencias de Python
-Instala las dependencias base de Python y luego el motor `llama-cpp-python` enlazado con la versión de CUDA correspondiente:
 
 ```bash
 # A. Instalar dependencias base
@@ -55,121 +52,135 @@ pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-c
 # pip install llama-cpp-python
 ```
 
-## Uso básico (Character OS)
+## Uso básico
 
 ```python
 from vtool_llama import VToolLlama
 
-# Inicializar (carga el modelo automáticamente, pero no asume un personaje)
+# Inicializar (carga el modelo automáticamente)
 llm = VToolLlama()
 
-# Ver qué personajes existen en vtool_llama/personajes/
+# Ver qué personajes existen
 print("Personajes:", llm.list_characters())
 
-# Cargar un personaje específico y sus memorias
+# Cargar un personaje (activa Psychology Engine automáticamente)
 llm.load_character("default")
 
-# Chat simple
+# Chat simple (con psicología + persona activas)
 respuesta = llm.chat("Hola, ¿cómo estás?")
 print(respuesta)
 
 # Streaming token por token
 for token in llm.stream_chat("Explícame Python"):
     print(token, end="")
-
-# Uso de Slash Commands (bypassean el LLM y alteran el motor directo)
-llm.chat("/rel 0.9 0.8") # Aumenta confianza/familiaridad
-llm.chat("/mood speech enojado y cortante") # Mod temporal al habla
-
-# Uso con context manager (auto-guarda episodio al salir)
-with VToolLlama(auto_load=True) as llm:
-    llm.load_character("default")
-    print(llm.chat("Hola"))
 ```
 
-## API completa (v0.2.2)
+## Arquitectura (v0.3.0)
+
+```
+Genome (13 ejes de temperamento innato)
+  → Core Identity (miedos, deseos, auto-narrativa, sesgos de interpretación)
+    → Soul (vida simulada con impactos psicológicos numéricos)
+      → Psychology (Big Five + apego + necesidades + heridas + worldview)
+        → Persona (sarcasmo, calidez, verborrea, humor — derivados, no fijos)
+          → Prompt (9 capas compiladas para el LLM)
+```
+
+### Mecanismos runtime
+
+- **Emotional Dynamics**: sistema multi-eje (valence/arousal) con decaimiento temporal, inercia emocional y triggers por texto del usuario
+- **Persona Compiler**: cada turno, la expresión se recalcula desde psicología + emoción
+- **Drift Detector**: analiza las respuestas reales del LLM y detecta deriva sostenida vs persona esperada
+- **Interpretation Engine**: el mismo evento produce distinta reacción según CoreIdentity (internaliza vs externaliza culpa, catastrofiza o minimiza)
+- **Memory Distortion**: los recuerdos se deforman con el tiempo (original ≠ versión recordada)
+
+## API completa (v0.3.0)
 
 ### Chat
+
 | Método | Descripción |
 |--------|-------------|
-| `chat(prompt, tools=None, **kwargs)` | Respuesta completa. Si prompt empieza con `/`, ejecuta slash command |
-| `stream_chat(prompt, tools=None, **kwargs)` | Streaming token por token. Valida tool_calls automáticamente. |
-| `chat_with_thinking(prompt, **kwargs)` | Retorna tupla `(thinking, content)`. Parsea `reasoning_content` y `<think>` tags |
-| `stream_chat_with_thinking(prompt, **kwargs)` | Streaming de tuplas `(tipo, token)` para razonamiento incremental |
-| `add_tool_message(content, tool_call_id)` | Registra respuesta de herramienta externa en el historial |
+| `chat(prompt, tools=None, **kwargs)` | Respuesta completa. Si prompt empieza con `/`, ejecuta slash command. Incluye trigger emocional + persona + drift post-respuesta. |
+| `stream_chat(prompt, tools=None, **kwargs)` | Streaming token por token |
+| `chat_with_thinking(prompt, **kwargs)` | Retorna tupla `(thinking, content)` |
+| `stream_chat_with_thinking(prompt, **kwargs)` | Streaming de tuplas `(tipo, token)` |
+| `add_tool_message(content, tool_call_id)` | Registra respuesta de herramienta externa |
+
+### Soul System (nuevo en v0.3.0)
+
+| Método | Descripción |
+|--------|-------------|
+| `generate_character_soul(name, force_regenerate=False, seed=None, progress_callback=None, stop_flag=None) -> dict` | Genera vida simulada completa mes a mes. Usa LLM para eventos con `psychological_impact` numérico y `belief_formed`. Guarda soul.json, beliefs.json, ChromaDB. Soporta checkpoints y reanudación. |
+| `has_character_soul(name) -> bool` | Verifica si existe soul.json |
+| `get_character_soul(name) -> dict \| None` | Obtiene datos del alma (incluye beliefs, genome, compressed) |
 
 ### Character System
+
 | Método | Descripción |
 |--------|-------------|
-| `list_characters()` | Lista nombres de personajes disponibles (carpetas con `dna/`) |
-| `load_character(name)` | Inicializa personaje + KV Cache Dual con invalidación SHA-256 |
+| `list_characters()` | Lista nombres de personajes disponibles |
+| `load_character(name)` | Inicializa personaje + KV Cache + Psychology Engine + Core Identity |
 | `create_character(...)` | Crea estructura de directorios y JSONs del DNA |
 | `generate_character_with_ai(name, prompt)` | Usa el LLM para autogenerar el DNA completo |
-| `rebuild_personality_state()` | Ejecuta LLM interno para resumir historial y actualizar relación |
-| `add_memory(content, priority, always_include, tags)` | Agrega memoria persistente a `long_term.json` |
-| `get_state_info()` | Retorna dict con el estado actual del agente |
+| `rebuild_personality_state()` | Reconstruye estado de personalidad vía LLM |
+| `add_memory(content, priority, always_include, tags)` | Agrega memoria persistente |
+| `get_state_info()` | Retorna dict con estado actual (incluye `soul_active`, `soul_archetype`) |
 
 ### Memoria y Contexto
+
 | Método | Descripción |
 |--------|-------------|
-| `clear_memory()` | Limpia el historial de conversación (preserva system prompt) |
-| `reset_chat()` | Alias de `clear_memory()` |
-| `get_memory()` | Obtiene el historial como lista de dicts |
-| `export_memory_json(path=None)` | Exporta historial a string JSON o archivo |
-| `import_memory_json(str_or_path)` | Importa historial desde string JSON o archivo |
-| `set_system_prompt(prompt)` | Cambia el system prompt en caliente |
-| `trim_memory()` | Recorta manualmente el contexto según presupuesto de tokens |
-| `save_episode()` | Guarda los últimos mensajes + resumen LLM en `episode_NNN.json` |
-| `list_episodes()` | Lista todos los episodios guardados |
-| `load_episode(id)` | Hace rollback al episodio indicado |
-| `delete_episode(id)` | Elimina un snapshot de episodio |
+| `clear_memory()` / `reset_chat()` | Limpia historial |
+| `get_memory()` | Obtiene historial como lista de dicts |
+| `export_memory_json(path=None)` | Exporta historial a JSON |
+| `import_memory_json(str_or_path)` | Importa historial desde JSON |
+| `set_system_prompt(prompt)` | Cambia system prompt en caliente |
+| `trim_memory()` | Recorta contexto según presupuesto de tokens |
+| `save_episode()` | Guarda snapshot episódico con resumen LLM |
+| `list_episodes()` | Lista episodios guardados |
+| `load_episode(id)` | Rollback a episodio. Ejecuta un **rollback cronológico** en la DB vectorial de chat (ChromaDB) eliminando los recuerdos posteriores al hito. |
+| `delete_episode(id)` | Elimina snapshot |
 
 ### Modelo
+
 | Método | Descripción |
 |--------|-------------|
-| `load_model(path=None)` | Carga modelo GGUF (path opcional, usa default_model si omitido) |
-| `reload_model()` | Recarga el modelo actual (útil tras cambiar config) |
-| `unload_model()` | Descarga el modelo (libera VRAM/RAM) |
-| `switch_model(path)` | Descarga el actual y carga otro modelo |
-| `get_model_info()` | Metadatos del modelo + info de hardware GPU (nvidia-smi) |
-| `list_available_models()` | Escanea `models_directory` y lista todos los `.gguf` |
+| `load_model(path=None)` | Carga modelo GGUF |
+| `reload_model()` | Recarga el modelo actual |
+| `unload_model()` | Descarga el modelo |
+| `switch_model(path)` | Cambia a otro modelo |
+| `get_model_info()` | Metadatos del modelo + info GPU |
+| `list_available_models()` | Escanea `models_directory` |
 
 ### Configuración y Debug
+
 | Método | Descripción |
 |--------|-------------|
-| `get_config()` | Retorna la configuración actual como `ConfigSchema` |
-| `reload_config()` | Recarga `config.json` en caliente |
-| `enable_debug()` | Activa logs de debug en consola |
-| `disable_debug()` | Desactiva logs de debug en consola |
+| `get_config()` | Retorna la configuración actual |
+| `reload_config()` | Recarga config.json en caliente |
+| `enable_debug()` / `disable_debug()` | Control de logs debug |
 
 ### Propiedades de Extensión
+
 | Propiedad | Tipo | Descripción |
 |-----------|------|-------------|
-| `state_manager` | `CharacterManager` | Acceso directo al sistema de capas del personaje |
+| `state_manager` | `CharacterManager` | Acceso a capas del personaje, psychology manager, core identity |
 | `slash_commands` | `SlashCommandRegistry` | Registro de comandos `/` para extensión |
 
-## Slash Commands Incluidos
-Se ejecutan como prompt en `chat()` o `stream_chat()`. **No gastan tokens** y operan sobre el Character OS directamente:
+## Slash Commands
 
 | Comando | Descripción |
 |---------|-------------|
-| `/mem <texto>` | Guarda memoria persistente con priority=1.0 |
-| `/memories` | Lista todas las memorias con ID, tags y pin |
-| `/save_episode` | Guarda snapshot episódico con resumen LLM |
+| `/mem <texto>` | Guarda memoria persistente |
+| `/memories` | Lista todas las memorias |
+| `/save_episode` | Guarda snapshot episódico |
 | `/episodes [load N \| delete N]` | Lista, carga o elimina episodios |
-| `/rel <trust> <familiarity>` | Actualiza el Relationship Engine (0.0 a 1.0) |
-| `/mood <layer> <value> [intensity]` | Aplica CharacterMod temporal (ej: `/mood speech enojado 1.5`) |
-| `/rebuild` | Reconstruye el estado de personalidad vía LLM |
-| `/state` | Muestra el estado del agente en JSON |
-| `/scene_view` | Fuerza descripción inmersiva de escena en 3ra persona |
-| `/help` | Lista todos los comandos disponibles |
-
-Para registrar comandos personalizados:
-```python
-@llm.slash_commands.command("mi_comando", description="Hace algo")
-def handler(args: str) -> str:
-    return f"Ejecutado con: {args}"
-```
+| `/rel <trust> <familiarity>` | Actualiza Relationship Engine |
+| `/mood <layer> <value> [intensity]` | Aplica CharacterMod temporal |
+| `/rebuild` | Reconstruye estado de personalidad |
+| `/state` | Muestra estado del agente (incluye `soul_active`) |
+| `/scene_view` | Descripción inmersiva de escena |
+| `/help` | Lista todos los comandos |
 
 ## Configuración (`config.json`)
 
@@ -191,6 +202,7 @@ def handler(args: str) -> str:
   "max_tokens": 512,
   "seed": -1,
   "short_memory_limit": 5,
+  "chat_memory_retrieval_limit": 3,
   "history_limit": 40,
   "auto_trim_context": true,
   "context_reserve_tokens": 800,
@@ -201,81 +213,57 @@ def handler(args: str) -> str:
 }
 ```
 
-| Campo | Default | Descripción |
-|-------|---------|-------------|
-| `n_ctx` | 4096 | Ventana de contexto en tokens |
-| `n_batch` | 512 | Tamaño de lote para inferencia |
-| `gpu_layers` | -1 | Capas en GPU (-1 = todas) |
-| `flash_attn` | true | Flash Attention (acelera inferencia) |
-| `short_memory_limit` | 5 | Mensajes recientes enviados crudos al LLM |
-| `history_limit` | 40 | Máximo de mensajes en el historial |
-| `auto_trim_context` | true | Recorte automático cuando se acerca al límite |
-| `context_reserve_tokens` | 800 | Tokens reservados para la respuesta |
-| `auto_unload_model` | false | Descarga el modelo al salir del context manager |
-| `model_idle_timeout` | 600 | Tiempo de inactividad antes de auto-descarga (segundos) |
-
-La versión 0.2.2 introduce un motor avanzado (Compiler v2) que separa el agente en componentes lógicos, utilizando un sistema de prioridad: **MODS > STATE > DNA**.
-Además, incluye el sistema de **KV Cache Dual**, guardando tensores pre-evaluados (Base y Dinámico) con invalidación criptográfica SHA-256 para acelerar x10 los arranques.
-
-- **DNA (Inmutable):** Archivos `identity.json`, `personality.json`, `speech.json` y `rules.json`. Define al personaje.
-- **Memory (Persistente):** `long_term.json`, `episodes/`, `base.state`, `personality_plus_memory.state`. Recuerdos, memoria episódica versionada y caché compilado.
-- **State (Dinámico):** `relationship_state.json`, `runtime_state.json`. Confianza, dinámica con el usuario.
-- **Mods (Superposiciones):** Modificadores temporales en tiempo de ejecución.
+## Estructura de archivos por personaje (v0.3.0)
 
 ```
-vtool_llama/
-│
-├── __init__.py              # Exporta la API pública
-├── engine.py                # VToolLlama (orquestador principal)
-├── character_manager.py     # Capas del Character OS
-├── character_compiler.py    # Compilador de prompts (MODS > STATE > DNA)
-├── chat_memory.py           # Historial de conversación (OpenAI format)
-├── config_manager.py        # Carga/validación de config.json
-├── exceptions.py            # Jerarquía de excepciones personalizadas
-├── logger_manager.py        # Logging a archivo + debug en consola
-├── model_manager.py         # Inferencia llama.cpp + KV Cache
-├── slash_commands.py        # Sistema de comandos con prefijo /
-├── stats_manager.py         # Estadísticas de rendimiento
-├── tokenizer_utils.py       # Tokenización y estimación de contexto
-├── types.py                 # Dataclasses (DNA, State, Mods, Config)
-│
-├── tools/                   # Sistema de herramientas internas
-│   ├── __init__.py          # Exporta la API de tools
-│   ├── definitions.py      # INTERNAL_TOOLS, TOOL_USAGE_POLICY, SCENE_SYSTEM_COMMAND
-│   ├── parser.py           # TEXT_TOOL_RE, parse, strip, execute
-│   ├── manager.py          # ToolExecutionManager (razoning loop, coercion)
-│   └── stream_processor.py # StreamPostProcessor (interceptor streaming)
-│
-├── config/
-│   └── config.json          # Configuración de la librería
-│
-├── examples/                # Scripts de ejemplo
-│   ├── console_chat.py      # Consola interactiva
-│   ├── example_ai_builder.py# Generación de personajes con IA
-│   ├── example_builder.py   # Creación manual de personajes
-│   ├── example_elara.py     # Uso con context manager y episodios
-│   └── thinking_and_tools.py# Thinking mode + Tool Calling
-│
-└── personajes/              # Perfiles de personajes
-    ├── default/
-    ├── coder/
-    └── roleplay/
+personajes/<nombre>/
+├── genome.json                        ← 13 ejes de temperamento innato (opcional)
+├── dna/
+│   ├── identity.json
+│   ├── personality.json
+│   ├── speech.json
+│   └── rules.json
+├── soul/
+│   ├── soul.json                      ← Núcleo psicológico comprimido + genome + beliefs
+│   ├── beliefs.json                   ← Creencias formadas con strength
+│   └── life_timeline/                 ← ChromaDB (embeddings semánticos)
+├── psychology/
+│   ├── current_state.json             ← PsychologyState sintetizado
+│   ├── emotional_state.json           ← EmotionalState con valence/arousal
+│   └── core_identity.json             ← CoreIdentity con fears, desires, self_narrative
+├── memory/
+│   ├── long_term.json
+│   ├── chat_history/                  ← Historial de chat vectorial en ChromaDB (embeddings)
+│   ├── episodes/
+│   ├── base.state
+│   └── personality_plus_memory.state
+├── state/
+│   ├── runtime_state.json
+│   ├── personality_state.json
+│   ├── relationship_state.json
+│   └── state_meta.json
+└── mods/
+    └── active_mods.json
 ```
 
 ## Características Principales
 
-- **KV Cache Dual con Inferencia Diferencial**: Reutiliza estados compilados (DNA) y calcula solo los tokens nuevos. ~0.2s de carga en caliente con invalidación criptográfica SHA-256.
-- **Character Compiler v2**: Compila el prompt dinámicamente con prioridad MODS > STATE > DNA. Los Mods sobreescriben cualquier capa sin modificar archivos originales.
-- **Memoria Episódica (Short-Term Versionada)**: Snapshot `episode_NNN.json` con resumen LLM que permite rollback y continuidad entre sesiones.
-- **Auto-Tools (Reasoning Loop)**: Inyecta `store_long_term_memory` silenciosamente. El modelo guarda datos en `long_term.json` sin romper el diálogo. Límite de 3 iteraciones anti-loop.
-- **AI Character Generator**: El LLM genera el DNA completo (identidad, personalidad, habla, reglas, memorias) desde un prompt descriptivo.
-- **Relationship Engine**: Confianza y familiaridad persistente (0.0 a 1.0) que modifica la actitud del personaje en tiempo real.
-- **Thinking Mode**: Soporte nativo para `reasoning_content` de DeepSeek-R1 y parseo de etiquetas `<think>` en streaming.
-- **Tool Calling con Validación**: El motor filtra alucinaciones de nombres de herramientas automáticamente. Formato OpenAI estándar.
-- **Slash Commands Extensibles**: Comandos `/` que no gastan tokens. Registrables via `@llm.slash_commands.command()`.
-- **Exportación/Importación de Historial**: Serializa y restaura conversaciones completas en JSON.
-- **GPU Automático**: Detección de CUDA via `torch` y `nvidia-smi`. Distribución dinámica de capas con fallback a CPU.
-- **Context Manager**: Soporte `with` con auto-guardado de episodios y descarga opcional del modelo.
+- **Genome (13 ejes)**: temperamento innato como predisposición, no como rasgo final. Separación conceptual de lo genético vs lo adquirido.
+- **Core Identity**: filtro de interpretación perceptual. Mismos eventos → distintas personas según miedos, deseos, auto-narrativa y sesgos cognitivos.
+- **Soul System**: vida simulada mes a mes con eventos que tienen `psychological_impact` numérico. Guarda en ChromaDB con búsqueda semántica. Checkpoints para reanudación.
+- **Psychology Synthesizer**: Big Five, apego, necesidades, heridas activas, worldview. Sintetizado desde Genome + Soul events.
+- **Emotional Dynamics**: sistema multi-eje (valence/arousal) con decaimiento exponencial, inercia emocional y triggers por palabras clave del usuario.
+- **Persona Compiler**: cada turno deriva speech_style, verbosity, sarcasm_tendency, warmth, defensiveness, humor desde psicología + emoción.
+- **Drift Detector**: feedback loop que analiza respuestas reales del LLM y detecta deriva sostenida vs persona esperada. Ajusta PsychologyState automáticamente.
+- **Turning Points**: eventos >0.8 de intensidad que redefinen auto-narrativa, creencias nucleares y agregan miedos. Con `meaning_assigned`.
+- **Memory Distortion**: los recuerdos se deforman con el tiempo. `EmotionalMemory.recall()` devuelve versión distorsionada si pasaron >5 años.
+- **Memory Loss Start**: el personaje puede tener un punto de inicio de memoria consciente (no recuerda infancia), aunque los eventos sigan afectando su psicología.
+- **Interpretation Engine**: `CoreIdentity.interpret_event()` filtra eventos por sesgos (internalize_blame, catastrophize, minimize, etc.) → mismo evento, distinta persona.
+- **Runtime Evolution**: el alma evoluciona durante la conversación. Nuevos eventos, creencias y heridas se agregan en runtime.
+- **KV Cache Dual**: inferencia diferencial con ~0.2s de carga en caliente.
+- **Thinking Mode**: soporte nativo para `reasoning_content` de DeepSeek-R1 y parseo de etiquetas `<think>`.
+- **Tool Calling con Validación**: filtra alucinaciones de nombres automáticamente.
 
 ## Licencia
+
 MIT

@@ -280,28 +280,37 @@ class ModelManager:
 
     def _check_cuda(self) -> bool:
         """
-        Detecta si CUDA está disponible.
+        Detecta si CUDA está disponible para llama-cpp-python.
 
         Returns:
             True si CUDA está disponible
         """
+        # Intentar detectar usando llama_cpp directamente
+        try:
+            import llama_cpp
+            if hasattr(llama_cpp, "llama_supports_gpu_offload"):
+                has_gpu = llama_cpp.llama_supports_gpu_offload()
+                if has_gpu:
+                    self._log("GPU", "llama.cpp reporta soporte para GPU/CUDA")
+                else:
+                    self._log("GPU", "llama.cpp compilado sin soporte GPU, usando CPU")
+                return has_gpu
+        except ImportError:
+            pass
+
+        # Fallback a torch si no pudimos con llama.cpp
         try:
             import torch
             cuda_available = torch.cuda.is_available()
             if cuda_available:
                 device_count = torch.cuda.device_count()
                 device_name = torch.cuda.get_device_name(0) if device_count > 0 else "desconocida"
-                self._log("GPU", f"CUDA detectado: {device_name} ({device_count} dispositivo(s))")
+                self._log("GPU", f"CUDA detectado vía torch: {device_name} ({device_count} dispositivo(s))")
             else:
                 self._log("GPU", "CUDA no disponible, usando CPU")
             return cuda_available
         except ImportError:
-            self._log("GPU", "torch no instalado, detectando CUDA por llama.cpp...")
-            # Intentar detectar CUDA por variable de entorno o plataforma
-            if os.name == "nt":
-                # En Windows, verificar si hay DLLs de CUDA
-                cuda_path = os.environ.get("CUDA_PATH", "")
-                return bool(cuda_path)
+            self._log("GPU", "No se pudo determinar soporte CUDA, asumiendo CPU")
             return False
 
     def _build_llama_kwargs(

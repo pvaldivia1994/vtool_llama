@@ -135,6 +135,48 @@ class ConfigManager:
         """Ruta al archivo de configuración."""
         return self._config_path
 
+    def merge_character_config(self, char_dir: Path) -> ConfigSchema:
+        """
+        Retorna un ConfigSchema mergeado con overrides del personaje.
+
+        Busca <char_dir>/config.json y si existe, sobreescribe las
+        propiedades del config base con las del personaje.
+
+        Args:
+            char_dir: directorio del personaje (ej: personajes/default/)
+
+        Returns:
+            ConfigSchema con overrides aplicados
+        """
+        # Ensure base config is loaded
+        if self._schema is None:
+            self.load()
+
+        merged = dict(self._raw)
+
+        char_config_path = char_dir / "config.json"
+        if char_config_path.exists():
+            try:
+                with open(char_config_path, "r", encoding="utf-8") as f:
+                    overrides = json.load(f)
+                merged.update(overrides)
+            except (json.JSONDecodeError, OSError) as e:
+                # Si el JSON del personaje está mal, usar base silenciosamente
+                pass
+
+        # Construir ConfigSchema desde el dict mergeado
+        from dataclasses import fields as dc_fields
+
+        default_instance = ConfigSchema()
+        field_values = {}
+        for dc_field in dc_fields(default_instance):
+            if dc_field.name in merged:
+                field_values[dc_field.name] = merged[dc_field.name]
+            else:
+                field_values[dc_field.name] = getattr(default_instance, dc_field.name)
+
+        return ConfigSchema(**field_values)
+
     @property
     def raw(self) -> dict:
         """El diccionario crudo del JSON (solo después de load)."""

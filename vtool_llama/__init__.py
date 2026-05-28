@@ -53,10 +53,30 @@ from .types import (
     RelationshipState,
     PersonalityState,
     CharacterMod,
+    # v2 types
+    Genome,
+    SoulEvent,
+    BeliefEntry,
+    CoreIdentity,
+    TurningPoint,
+    EmotionalMemory,
+    PsychologyState,
+    EmotionalState,
+    PersonaState,
+    DriftEntry,
+)
+from .soul_generator import SoulGenerator, RuntimeSoulAccessor
+from .psychology_engine import (
+    PsychologySynthesizer,
+    EmotionalDynamics,
+    DriftDetector,
+    BeliefManager,
+    RuntimeSoulManager,
+    dna_traits_to_genome,
 )
 
 # Versión de la librería (semver)
-__version__ = "0.2.2"
+__version__ = "0.3.0"
 
 # Exportar la API pública
 __all__ = [
@@ -65,6 +85,16 @@ __all__ = [
     # Sistema de agente
     "CharacterManager",
     "SlashCommandRegistry",
+    # Soul System
+    "SoulGenerator",
+    "RuntimeSoulAccessor",
+    # Psychology Engine v2
+    "PsychologySynthesizer",
+    "EmotionalDynamics",
+    "DriftDetector",
+    "BeliefManager",
+    "RuntimeSoulManager",
+    "dna_traits_to_genome",
     # Excepciones
     "VToolLlamaError",
     "ModelNotFoundError",
@@ -90,6 +120,17 @@ __all__ = [
     "RelationshipState",
     "PersonalityState",
     "CharacterMod",
+    # Tipos v2
+    "Genome",
+    "SoulEvent",
+    "BeliefEntry",
+    "CoreIdentity",
+    "TurningPoint",
+    "EmotionalMemory",
+    "PsychologyState",
+    "EmotionalState",
+    "PersonaState",
+    "DriftEntry",
     # Metadatos
     "__version__",
 ]

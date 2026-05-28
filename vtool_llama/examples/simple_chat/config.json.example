@@ -1,0 +1,31 @@
+{
+  "debug": false,
+  "models_directory": "C:/_IA/_llama_models",
+  "default_model": "Qwen3-8B-Q4_K_M.gguf",
+  "system_prompt": "Eres un asistente IA conversacional. Eres empático, inteligente y ayudas a los usuarios de forma clara y concisa.",
+  "n_ctx": 4096,
+  "n_batch": 512,
+  "gpu_layers": -1,
+  "threads": 8,
+  "flash_attn": true,
+  "temperature": 0.8,
+  "top_p": 0.9,
+  "top_k": 40,
+  "repeat_penalty": 1.1,
+  "max_tokens": 512,
+  "seed": -1,
+  "short_memory_limit": 5,
+  "history_limit": 40,
+  "auto_trim_context": true,
+  "context_reserve_tokens": 800,
+  "enable_logging": true,
+  "enable_console_debug": false,
+  "auto_unload_model": false,
+  "model_idle_timeout": 600,
+  "web_config": {
+    "host": "127.0.0.1",
+    "port": 3050,
+    "reload": true,
+    "cors_origins": ["*"]
+  }
+}

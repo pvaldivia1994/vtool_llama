@@ -29,7 +29,7 @@ import re
 import threading
 from collections import deque
 from pathlib import Path
-from typing import Any, Generator, Optional
+from typing import Any, Callable, Generator, Optional
 
 from .chat_memory import ChatMemory
 from .config_manager import ConfigManager
@@ -46,6 +46,7 @@ from .slash_commands import SlashCommandRegistry
 from .character_manager import CharacterManager
 from .stats_manager import StatsManager
 from .types import ConfigSchema, EpisodeSnapshot, GenerationStats, ModelInfo, PersonalityState
+from .soul_generator import SoulGenerator, RuntimeSoulAccessor
 from .tools import (
     INTERNAL_TOOLS,
     SCENE_SYSTEM_COMMAND,
@@ -144,6 +145,18 @@ class VToolLlama:
         self._scene_requested = False
 
         # ------------------------------------------------------------------
+        # 6c. Inicializar Soul System (opcional)
+        # ------------------------------------------------------------------
+        self._soul_generator = SoulGenerator(
+            character_manager=self._character_manager,
+            model_manager=self._model_manager,
+            config=self._config,
+            log_debug_fn=self._log_debug,
+            log_info_fn=self._log_info,
+            log_warning_fn=self._log_warning,
+        )
+
+        # ------------------------------------------------------------------
         # 7. Short memory (últimos N mensajes para contexto inmediato)
         # ------------------------------------------------------------------
         self._short_memory: deque[dict] = deque(
@@ -228,6 +241,7 @@ class VToolLlama:
 
         # --- 2. Interceptar #mem (atajo directo para guardar memoria) ---
         mem_prefix = "#mem "
+        system_injection = ""
         if prompt.strip().startswith(mem_prefix):
             mem_content = prompt.strip()[len(mem_prefix):].strip()
             if mem_content:
@@ -235,8 +249,7 @@ class VToolLlama:
                     content=mem_content, always_include=True, priority=1.0,
                 )
                 self._log_info(f"🧠 [#mem] Memoria guardada: {mem_content}")
-                char_name = self._character_manager.character_name.capitalize() if self._character_manager.character_name else "El personaje"
-                prompt = f"(Has guardado un recuerdo: '{mem_content}') Confirma brevemente en character que lo has recordado, sin mencionar herramientas ni sistemas."
+                system_injection = f"\n\n[SYSTEM: El usuario acaba de guardar un recuerdo: '{mem_content}'. Confirma brevemente en character que lo has recordado, sin mencionar herramientas ni sistemas.]"
 
         with self._lock:
             # --- 3. Actualizar short memory ---
@@ -251,6 +264,9 @@ class VToolLlama:
             # --- 4. Inyectar personality state en system prompt ---
             self._inject_personality_into_system_prompt()
 
+            # --- 4b. Psychology Engine v2: trigger emocional desde prompt ---
+            self._apply_emotional_trigger(prompt)
+
             # Ciclo de razonamiento interno (Auto-Tools loop)
             # El modelo puede llamar a herramientas internas (remember_memory)
             # y luego continuar generando. MAX_LOOPS evita bucles infinitos.
@@ -261,6 +277,18 @@ class VToolLlama:
             while loop_count < MAX_LOOPS:
                 loop_count += 1
                 messages = self._memory.get_context_messages()
+
+                # Inyectar contexto Soul (recuerdos relevantes) solo en primer intento
+                if loop_count == 1:
+                    self._inject_soul_context_into_messages(messages, prompt)
+                    self._inject_chat_memory_into_messages(messages, prompt)
+                
+                if system_injection and loop_count == 1:
+                    if messages and messages[-1].get("role") == "user":
+                        # Modificar solo la copia enviada al LLM
+                        messages[-1] = dict(messages[-1])
+                        messages[-1]["content"] += system_injection
+
                 self._stats.begin_generation()
 
                 try:
@@ -360,10 +388,18 @@ class VToolLlama:
                     if memory_saved:
                         char_name = self._character_manager.character_name.capitalize() if self._character_manager.character_name else "El personaje"
                         response_text = f"** {char_name} recordará esto **\n\n" + response_text
-                        
+
+                    # Psychology Engine v2: feedback loop post-respuesta
+                    self._feed_response_to_drift_detector(response_text)
+
                     self._memory.add_assistant_message(content=response_text, tool_calls=None)
                     self._short_memory.append({"role": "assistant", "content": response_text})
                     self._log_generation_stats()
+                    
+                    # Guardar turno de chat en ChromaDB
+                    if response_text:
+                        self._character_manager.save_chat_turn(prompt, response_text)
+                    
                     return response_text
 
                 except ModelNotLoadedError:
@@ -424,6 +460,7 @@ class VToolLlama:
 
         # --- 2. Interceptar #mem (atajo directo para guardar memoria) ---
         mem_prefix = "#mem "
+        system_injection = ""
         if prompt.strip().startswith(mem_prefix):
             mem_content = prompt.strip()[len(mem_prefix):].strip()
             if mem_content:
@@ -431,8 +468,7 @@ class VToolLlama:
                     content=mem_content, always_include=True, priority=1.0,
                 )
                 self._log_info(f"🧠 [#mem] Memoria guardada: {mem_content}")
-                char_name = self._character_manager.character_name.capitalize() if self._character_manager.character_name else "El personaje"
-                prompt = f"(Has guardado un recuerdo: '{mem_content}') Confirma brevemente en character que lo has recordado, sin mencionar herramientas ni sistemas."
+                system_injection = f"\n\n[SYSTEM: El usuario acaba de guardar un recuerdo: '{mem_content}'. Confirma brevemente en character que lo has recordado, sin mencionar herramientas ni sistemas.]"
 
         # --- 0. Cargar herramientas internas (Auto-Tools) ---
         internal_tools = list(INTERNAL_TOOLS)
@@ -462,6 +498,18 @@ class VToolLlama:
             while loop_count < MAX_LOOPS:
                 loop_count += 1
                 messages = self._memory.get_context_messages()
+
+                # Inyectar contexto Soul (recuerdos relevantes) solo en primer intento
+                if loop_count == 1:
+                    self._inject_soul_context_into_messages(messages, prompt)
+                    self._inject_chat_memory_into_messages(messages, prompt)
+                
+                if system_injection and loop_count == 1:
+                    if messages and messages[-1].get("role") == "user":
+                        # Modificar solo la copia enviada al LLM
+                        messages[-1] = dict(messages[-1])
+                        messages[-1]["content"] += system_injection
+
                 self._stats.begin_generation()
 
                 try:
@@ -573,6 +621,9 @@ class VToolLlama:
                     self._memory.add_assistant_message(content=full_response or None, tool_calls=None)
                     if full_response:
                         self._short_memory.append({"role": "assistant", "content": full_response})
+                        # Guardar turno de chat en ChromaDB
+                        self._character_manager.save_chat_turn(prompt, full_response)
+                        
                     self._log_generation_stats()
                     return
 
@@ -1009,40 +1060,53 @@ class VToolLlama:
             raise RuntimeError("El modelo debe estar cargado para usar generate_character_with_ai(). Instancia con auto_load=True o llama a load_model() primero.")
 
         system_prompt = (
-            "Eres un experto diseñador de personajes y escritor creativo. "
-            "Tu tarea es crear un perfil de personaje rico y detallado basado en la solicitud del usuario.\n"
-            "DEBES responder ÚNICAMENTE con un objeto JSON válido, sin Markdown, sin explicaciones, solo el JSON puro.\n"
-            "NO agregues campos adicionales ni cambies los nombres de los campos existentes. "
-            "Usa EXACTAMENTE los nombres de clave que aparecen en la estructura de abajo.\n\n"
-            "El JSON DEBE tener esta estructura exacta (sin campos extra):\n"
+            "You are an expert character designer and creative writer. "
+            "Your task is to create a rich, detailed character profile based on the user's request.\n"
+            "You MUST respond ONLY with valid JSON, no Markdown, no explanations, raw JSON only.\n"
+            "Do NOT add extra fields or change existing field names. "
+            "Use EXACTLY the key names shown in the structure below.\n\n"
+            "The character will be used in a natural conversation + roleplay system. "
+            "The system has:\n"
+            "- [SYSTEM CORE]: identity foundation (human-like communication)\n"
+            "- [INTERACTION MODE]: default behavior + roleplay gate (roleplay only when requested)\n"
+            "- [BEHAVIOR PRIORITY]: personality colors answers but doesn't block them\n"
+            "- [CONTEXT AWARENESS]: subtle personality for technical topics\n\n"
+            "Your JSON creates the character's DNA layer. "
+            "Make it psychologically deep: give the character inner conflicts, "
+            "contradictions, and a mix of strengths and flaws.\n\n"
+            "The JSON MUST have this exact structure (no extra fields):\n"
             "{\n"
             '  "identity": {\n'
-            '    "name": "Nombre público",\n'
-            '    "role": "Su rol o título",\n'
-            '    "background": "Historia de fondo muy detallada y creativa",\n'
-            '    "scenario": "El mundo actual o contexto donde se encuentra"\n'
+            '    "name": "Public name",\n'
+            '    "role": "Their role or title",\n'
+            '    "age": "Character age",\n'
+            '    "background": "Very detailed creative backstory",\n'
+            '    "scenario": "Current world or context"\n'
             "  },\n"
-            '  "personality": {\n'
-            '    "traits": ["rasgo1", "rasgo2", "rasgo3"],\n'
-            '    "motivations": ["su principal motivación", "otra motivación"],\n'
-            '    "flaws": ["defecto de carácter", "miedo principal"]\n'
-            "  },\n"
-            '  "speech": {\n'
-            '    "style": "ej. Casual, Formal, Sarcástico",\n'
-            '    "tone": "ej. Cálido, Frío",\n'
-            '    "verbosity": "Bajo, Medio o Alto",\n'
-            '    "examples": [\n'
-            '      "{{user}}: hola\\n{{char}}: *levanta la mirada* ¿Qué quieres?",\n'
-            '      "{{user}}: ayúdame\\n{{char}}: *suspira* Supongo que no hay otra opción."\n'
-            '    ]\n'
-            "  },\n"
+    '  "personality": {\n'
+    '    "traits": ["trait1", "trait2", "trait3"],\n'
+    '    "motivations": ["main motivation", "secondary motivation"],\n'
+    '    "flaws": ["character flaw", "main fear"],\n'
+    '    "inner_conflict": "what they want vs what they fear — a sentence",\n'
+    '    "emotional_triggers": ["loud voices → panic", "kindness → suspicion"]\n'
+    "  },\n"
+    '  "speech": {\n'
+    '    "style": "e.g. Casual, Formal, Sarcastic, Poetic",\n'
+    '    "tone": "e.g. Warm, Cold, Playful",\n'
+    '    "verbosity": "Low, Medium or High",\n'
+    '    "speech_patterns": ["stutters under pressure", "avoids pronouns", "uses diminutives when scared"],\n'
+    '    "examples": [\n'
+    '      "{{user}}: hello\\n{{char}}: *looks up* What do you want?",\n'
+    "      \"{{user}}: help me\\n{{char}}: *sighs* I guess there's no other way.\"\n"
+    "    ]\n"
+    "  },\n"
             '  "rules": {\n'
-            '    "core_rules": ["regla importante 1", "regla 2"],\n'
-            '    "never_do": ["lo que nunca debe hacer 1"],\n'
-            '    "response_style": ["ej. usa asteriscos para acciones", "ej. respuestas cortas"],\n'
+            '    "core_rules": ["important rule 1", "rule 2"],\n'
+            '    "never_do": ["what they must never do"],\n'
+            '    "response_style": ["e.g. use asterisks for actions", "e.g. short responses"],\n'
             '    "roleplay_mode": true\n'
             "  },\n"
-            '  "memories": ["memoria inicial 1 sobre sí mismo o el usuario", "memoria 2"]\n'
+            '  "memories": ["initial memory 1 about themselves or the user", "memory 2"]\n'
             "}"
         )
 
@@ -1087,16 +1151,116 @@ class VToolLlama:
             self._log_error(f"Fallo al generar personaje con IA. Respuesta raw: {response_text}")
             raise RuntimeError(f"Error parseando el personaje autogenerado: {e}")
 
+    # ======================================================================
+    # API PÚBLICA — SOUL SYSTEM
+    # ======================================================================
+
+    def generate_character_soul(
+        self,
+        character_name: str,
+        force_regenerate: bool = False,
+        seed: Optional[int] = None,
+        progress_callback: Optional[Callable[[int, str], None]] = None,
+        stop_flag: Optional[Callable[[], bool]] = None,
+        country: str = "US",
+        birth_year: int = 2000,
+        economy: str = "stable",
+        family_income: str = "middle_class",
+        world_description: str = "",
+        start_age_years: int = 0,
+        memory_loss_start_age: int = 0,
+        interactive_mode: bool = False,
+        interactive_callback: Optional[Callable[[int, list[dict]], str]] = None,
+        world_type: str = "real",
+        use_historical_context: bool = False,
+        fictional_lore_reference: str = "",
+        max_age_years: Optional[int] = None,
+        save_events_history: bool = True,
+    ) -> dict:
+        """
+        Genera una vida simulada completa (Soul) para un personaje.
+
+        El Soul System crea una vida simulada mes a mes con eventos,
+        relaciones, reflexiones psicologicas y evolucion de personalidad.
+        Todo se comprime en soul.json y se almacena en ChromaDB para
+        busqueda semantica en tiempo de ejecucion.
+
+        Args:
+            character_name: nombre del personaje
+            force_regenerate: si True, regenera aunque ya exista soul.json
+            seed: semilla para reproducibilidad (None = aleatorio)
+            progress_callback: fn(progress: 0-100, stage: str)
+            stop_flag: fn() -> bool, si retorna True detiene generacion
+            country: país de origen para contexto
+            birth_year: año de nacimiento
+            economy: situación económica del entorno
+            family_income: nivel de ingresos familiares
+            world_description: descripción o reglas especiales del mundo
+            start_age_years: edad de inicio de simulación de vida
+            memory_loss_start_age: edad de inicio de memoria narrativa
+            interactive_mode: si True, permite intervención interactiva anual
+            interactive_callback: fn(year, events) -> command_str para intervenir
+
+        Returns:
+            dict con status, character, soul_path, events_generated
+
+        Raises:
+            RuntimeError: si no hay modelo cargado
+            ValueError: si el personaje no existe o ya tiene soul
+        """
+        if not self._model_manager.is_loaded:
+            raise RuntimeError(
+                "El modelo debe estar cargado para generate_character_soul(). "
+                "Instancia con auto_load=True o llama a load_model() primero."
+            )
+
+        return self._soul_generator.generate_soul(
+            character_name=character_name,
+            force_regenerate=force_regenerate,
+            seed=seed,
+            progress_callback=progress_callback,
+            stop_flag=stop_flag,
+            country=country,
+            birth_year=birth_year,
+            economy=economy,
+            family_income=family_income,
+            world_description=world_description,
+            start_age_years=start_age_years,
+            memory_loss_start_age=memory_loss_start_age,
+            interactive_mode=interactive_mode,
+            interactive_callback=interactive_callback,
+            world_type=world_type,
+            use_historical_context=use_historical_context,
+            fictional_lore_reference=fictional_lore_reference,
+            max_age_years=max_age_years,
+            save_events_history=save_events_history,
+        )
+
+    def has_character_soul(self, character_name: str) -> bool:
+        """Verifica si un personaje tiene alma generada."""
+        return self._soul_generator.has_soul(character_name)
+
+    def get_character_soul(self, character_name: str) -> Optional[dict]:
+        """Obtiene los datos del alma de un personaje."""
+        return self._soul_generator.get_soul_data(character_name)
+
     def load_character(self, name: str) -> None:
         self._character_manager.load_character(name)
-        
-        # 1. Intentar cargar KV Cache acelerado
+
+        # 0. Mergear overrides de config del personaje (system_prompt, temperatura, etc.)
         char_dir = self._character_manager._char_dir
+        if char_dir:
+            merged = self._config_manager.merge_character_config(char_dir)
+            if merged.system_prompt != self._config.system_prompt:
+                self._log_debug("CONFIG", f"system_prompt overrideado por '{name}/config.json'")
+            self._config = merged
+
+        # 1. Intentar cargar KV Cache acelerado
         if char_dir and self._model_manager.is_loaded:
             base_kv_path = char_dir / "memory" / "base.state"
             full_kv_path = char_dir / "memory" / "personality_plus_memory.state"
             
-            prompt = self._character_manager.build_system_prompt(self._config.system_prompt)
+            prompt = self._character_manager.build_system_prompt(self._config.system_prompt, self._config)
             
             # Si el base no existe, el warmup se encarga de crear base y luego full
             if not base_kv_path.exists() or not full_kv_path.exists() or self._character_manager.check_needs_rebuild(prompt):
@@ -1104,8 +1268,12 @@ class VToolLlama:
             else:
                 self._model_manager.load_kv_state(str(full_kv_path))
 
-        # 2. Forzar actualización del prompt en memoria
+        # 2. Forzar actualización del prompt en memoria (incluye Soul si está activo)
         self._inject_personality_into_system_prompt()
+
+        # 3. Log si Soul está activo
+        if self._character_manager._soul_accessor and self._character_manager._soul_accessor.is_active:
+            self._log_info(f"Soul System activo para '{name}'. Personalidad potenciada por vida simulada.")
 
     def _warmup_character_cache(self, prompt: Optional[str] = None) -> None:
         """Pre-evalúa el system prompt usando arquitectura dual (Base + Dynamic)."""
@@ -1114,21 +1282,43 @@ class VToolLlama:
             return
             
         base_kv_path = char_dir / "memory" / "base.state"
+        base_soul_kv_path = char_dir / "memory" / "base_soul.state"
         full_kv_path = char_dir / "memory" / "personality_plus_memory.state"
         
+        soul = getattr(self._character_manager, '_soul_accessor', None)
+        soul_active = soul is not None and soul.is_active
+
         # 1. Base State (DNA)
-        base_prompt = self._character_manager.build_base_system_prompt(self._config.system_prompt)
+        base_prompt = self._character_manager.build_base_system_prompt(self._config.system_prompt, self._config)
         if not base_kv_path.exists():
             self._log_debug("STATE", "Generando KV Cache Base (DNA)...")
             self._model_manager.warmup_system_prompt(base_prompt)
             self._model_manager.save_kv_state(str(base_kv_path))
+            # Guardar prompt en YAML para depuración
+            base_yaml_path = char_dir / "memory" / "base_promt.yaml"
+            lines = base_prompt.split('\n')
+            yaml_lines = ["prompt: |"]
+            for line in lines:
+                yaml_lines.append(f"  {line}")
+            base_yaml_path.write_text('\n'.join(yaml_lines) + '\n', encoding='utf-8')
+
+        # 1.5. Base Soul State (DNA + Soul) - Solo para modelos con Soul
+        if soul_active:
+            if not base_soul_kv_path.exists():
+                self._log_debug("STATE", "Generando KV Cache Base Soul (DNA + Soul)...")
+                base_soul_prompt = self._character_manager.compile_base_soul_prompt(self._config.system_prompt, self._config)
+                self._model_manager.warmup_system_prompt(base_soul_prompt)
+                self._model_manager.save_kv_state(str(base_soul_kv_path))
             
-        # 2. Cargar Base State
-        self._model_manager.load_kv_state(str(base_kv_path))
+        # 2. Cargar Base State adecuado
+        if soul_active and base_soul_kv_path.exists():
+            self._model_manager.load_kv_state(str(base_soul_kv_path))
+        else:
+            self._model_manager.load_kv_state(str(base_kv_path))
         
         # 3. Full State (DNA + Memory + Mods + Runtime)
         if prompt is None:
-            prompt = self._character_manager.build_system_prompt(self._config.system_prompt)
+            prompt = self._character_manager.build_system_prompt(self._config.system_prompt, self._config)
             
         self._log_debug("STATE", "Añadiendo Memoria al KV Cache Base...")
         # Al enviarle el prompt completo, Llama internamente detecta que el prefijo
@@ -1329,10 +1519,22 @@ class VToolLlama:
         Retorna información del estado actual del agente.
 
         Returns:
-            dict con personality, relationship, memories, mood, versiones.
+            dict con personality, relationship, memories, mood, soul, versiones.
         """
         state = {'name': self._character_manager.character_name}
-        state["needs_rebuild"] = self._character_manager.needs_rebuild
+        state["needs_rebuild"] = getattr(self._character_manager, '_needs_rebuild', True)
+
+        # Soul System info
+        soul = getattr(self._character_manager, '_soul_accessor', None)
+        if soul and soul.is_active:
+            state["soul_active"] = True
+            state["soul_archetype"] = (
+                soul._soul_data.get("core_identity", {}).get("archetype", "")
+                if soul._soul_data else ""
+            )
+        else:
+            state["soul_active"] = False
+
         return state
 
     @property
@@ -1504,10 +1706,11 @@ class VToolLlama:
         """
         Construye el system prompt final combinando el prompt base
         del config con las capas de personalidad del CharacterManager,
-        las policy de tools, y lo inyecta en la ChatMemory.
+        las policy de tools, el Soul System (si está activo),
+        y lo inyecta en la ChatMemory.
         """
         enriched_prompt = self._character_manager.build_system_prompt(
-            self._config.system_prompt
+            self._config.system_prompt, self._config
         )
 
         # Inyectar TOOL_USAGE_POLICY solo cuando hay un personaje cargado
@@ -1802,6 +2005,129 @@ class VToolLlama:
             # Marcar para que el while loop continue y el modelo
             # genere la descripcion con el contexto actualizado
             self._scene_requested = True
+
+    def _inject_soul_context_into_messages(self, messages: list[dict], user_prompt: str) -> list[dict]:
+        """
+        Inyecta recuerdos del Soul System semanticamente relevantes
+        al prompt del usuario. Modifica el ultimo mensaje user para
+        incluir contexto recuperado si el Soul esta activo.
+        """
+        soul = getattr(self._character_manager, '_soul_accessor', None)
+        if not soul or not soul.is_active:
+            return messages
+
+        if not messages:
+            return messages
+
+        context = soul.retrieve_context(user_prompt, top_k=3)
+        if not context:
+            return messages
+
+        # Inyectar contexto en el ultimo mensaje de usuario
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "user":
+                messages[i] = dict(messages[i])
+                messages[i]["content"] = (
+                    messages[i]["content"].rstrip()
+                    + "\n\n" + context
+                )
+                break
+
+        return messages
+
+    def _inject_chat_memory_into_messages(self, messages: list[dict], user_prompt: str) -> list[dict]:
+        """
+        Recupera turnos de chat relevantes de ChromaDB basados en el user_prompt 
+        y los inyecta como contexto en el primer mensaje de usuario.
+        """
+        if not self._character_manager:
+            return messages
+
+        limit = getattr(self._config, "chat_memory_retrieval_limit", 3)
+        if limit <= 0:
+            return messages
+
+        relevant_turns = self._character_manager.retrieve_relevant_chat(user_prompt, top_k=limit)
+        if not relevant_turns:
+            return messages
+
+        # Filtrar turnos de muy baja relevancia
+        relevant_turns = [t for t in relevant_turns if t.get("similarity", 0) > 0.35]
+        if not relevant_turns:
+            return messages
+
+        context_lines = []
+        for t in relevant_turns:
+            doc = t.get("document", "")
+            if doc:
+                context_lines.append(f"[{t.get('metadata', {}).get('timestamp', 'Pasado')}] {doc}")
+
+        if context_lines:
+            context_str = "\n".join(context_lines)
+            injection = f"\n\n[CONTEXTO: Recuerdos de conversaciones pasadas que podrían ser relevantes para responder ahora:]\n{context_str}\n"
+
+            # Inyectar en el ultimo mensaje del usuario que se enviará
+            for i in range(len(messages) - 1, -1, -1):
+                if messages[i].get("role") == "user":
+                    messages[i] = dict(messages[i])
+                    messages[i]["content"] += injection
+                    self._log_info(f"🧠 [ChatMemory] Se inyectaron {len(context_lines)} turnos pasados al contexto.")
+                    break
+
+        return messages
+
+    def _apply_emotional_trigger(self, prompt: str) -> None:
+        """
+        Psychology Engine v2: aplica trigger emocional desde el prompt del usuario.
+        """
+        psych_mgr = getattr(self._character_manager, '_psychology_manager', None)
+        if not psych_mgr:
+            return
+        try:
+            psych_mgr.apply_emotional_trigger(prompt)
+            # Re-sintetizar persona con la nueva emoción
+            psych_mgr.synthesize_persona()
+        except Exception:
+            pass
+
+    def _feed_response_to_drift_detector(self, response_text: str) -> None:
+        """
+        Psychology Engine v2: retroalimentacion comportamiento→personalidad.
+        Analiza la respuesta generada y detecta deriva.
+        """
+        psych_mgr = getattr(self._character_manager, '_psychology_manager', None)
+        if not psych_mgr or not psych_mgr.persona:
+            return
+        try:
+            from .psychology_engine import DriftDetector
+            if not hasattr(self, '_drift_detector'):
+                self._drift_detector = DriftDetector()
+            drift = self._drift_detector.feed(response_text, psych_mgr.persona)
+            if drift:
+                self._log_debug("PSY", f"Drift detected: {drift.reason}")
+                # Tick psychology con la deriva detectada
+                recent = [{"response": response_text}]
+                psych_mgr.tick(recent_interactions=recent)
+                self._character_manager.save_psychology_state()
+        except Exception:
+            pass
+
+    def _psychology_tick(self) -> None:
+        """
+        Psychology Engine v2: tick periodico de sintesis psicologica.
+        """
+        psych_mgr = getattr(self._character_manager, '_psychology_manager', None)
+        if not psych_mgr:
+            return
+        try:
+            # Obtener interacciones recientes desde el historial
+            recent_hist = []
+            for m in self._memory.messages[-6:]:
+                if m.content and m.role in ("user", "assistant"):
+                    recent_hist.append({"response": m.content})
+            psych_mgr.tick(recent_interactions=recent_hist)
+        except Exception:
+            pass
 
     def _log_generation_stats(self) -> None:
         """Muestra estadísticas de la última generación si debug está activo."""

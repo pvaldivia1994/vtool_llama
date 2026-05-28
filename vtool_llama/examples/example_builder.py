@@ -19,12 +19,14 @@ def main():
     print("\n--- 1. IDENTIDAD ---")
     char_name = input("Nombre público del personaje: ").strip()
     role = input("Rol (ej. 'Mago Errante', 'Asistente de Ventas'): ").strip()
+    age = input("Edad: ").strip()
     background = input("Historia de fondo / Background: ").strip()
     scenario = input("Mundo / Escenario actual (opcional): ").strip()
     
     identity_data = {
         "name": char_name,
         "role": role,
+        "age": age or "Desconocida",
         "background": background,
         "scenario": scenario
     }
