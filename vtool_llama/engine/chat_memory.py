@@ -20,37 +20,91 @@ from __future__ import annotations
 
 import copy
 import json
-from typing import Optional
+from collections import deque
+from typing import TYPE_CHECKING, Optional
 
 from ..types import Message
+
+if TYPE_CHECKING:
+    from ..db import ChatStore
+    from .context_builder import ContextBuilder
+    from ..utils import TokenCounter
 
 
 class ChatMemory:
     """
-    Memoria de conversación con límite configurable y auto-trim.
+    Memoria de conversación con límite configurable.
+
+    Ring buffer en RAM con maxlen. Los mensajes se persisten en SQLite
+    cuando hay un ChatStore vinculado.
 
     Args:
         system_prompt: mensaje de sistema inicial
-        history_limit: máximo de mensajes en el historial
-                       (excluyendo el system prompt)
-        auto_trim: si es True, recorta automáticamente cuando
-                   el contexto se acerca al límite
+        history_limit: máximo de mensajes en el ring buffer
+                        (excluyendo system prompt, default 25)
     """
 
     def __init__(
         self,
         system_prompt: str = "Eres un asistente útil y natural.",
-        history_limit: int = 40,
-        auto_trim: bool = True,
+        history_limit: int = 25,
     ):
         self._system_prompt = system_prompt
         self._history_limit = history_limit
-        self._auto_trim = auto_trim
 
-        # El historial interno siempre empieza con el system prompt
-        self._messages: list[Message] = [
-            Message(role="system", content=system_prompt)
-        ]
+        self._store: Optional[ChatStore] = None
+        self._context_builder: Optional[ContextBuilder] = None
+        self._token_counter: Optional[TokenCounter] = None
+        self._conversation_id: Optional[str] = None
+        self._branch_id: str = "main"
+        self._active_leaf_id: int = 0
+
+        self._messages: deque[Message] = deque(
+            [Message(role="system", content=system_prompt)],
+            maxlen=history_limit + 1,
+        )
+
+    # ------------------------------------------------------------------
+    # Vinculación con SQLite event store
+    # ------------------------------------------------------------------
+
+    def bind_store(
+        self,
+        store: ChatStore,
+        context_builder: ContextBuilder,
+        token_counter: TokenCounter,
+        conversation_id: str,
+        branch_id: str = "main",
+        leaf_message_id: int = 0,
+    ) -> None:
+        """Vincula esta ChatMemory al event store. A partir de ahora,
+        add_user_message y add_assistant_message también escriben a SQLite."""
+        self._store = store
+        self._context_builder = context_builder
+        self._token_counter = token_counter
+        self._conversation_id = conversation_id
+        self._branch_id = branch_id
+        self._active_leaf_id = leaf_message_id
+
+    def load_context(self, token_budget: int) -> None:
+        """Reconstruye el ring buffer desde ContextBuilder."""
+        if not self._context_builder or not self._conversation_id:
+            return
+        messages = self._context_builder.build_messages(
+            self._conversation_id,
+            self._branch_id,
+            self._active_leaf_id,
+            token_budget,
+            self._system_prompt,
+        )
+        self._messages.clear()
+        for m in messages:
+            if isinstance(m, dict):
+                self._messages.append(Message(**m))
+            else:
+                self._messages.append(m)
+        if self._messages and self._messages[0].role == "system":
+            self._messages[0].content = self._system_prompt
 
     # ------------------------------------------------------------------
     # Propiedades
@@ -59,7 +113,7 @@ class ChatMemory:
     @property
     def messages(self) -> list[Message]:
         """Lista completa de mensajes (solo lectura recomendada)."""
-        return self._messages
+        return list(self._messages)
 
     def _message_to_dict(self, msg: Message) -> dict:
         d = {"role": msg.role, "content": msg.content}
@@ -94,20 +148,47 @@ class ChatMemory:
     # Operaciones del historial
     # ------------------------------------------------------------------
 
-    def add_user_message(self, content: str) -> None:
-        """Agrega un mensaje del usuario al historial."""
+    def add_user_message(self, content: str) -> Optional[int]:
+        """Agrega un mensaje del usuario al historial.
+        Si hay store vinculado, también persiste en SQLite.
+        Retorna el message_id si se persistió, None si no."""
         self._messages.append(Message(role="user", content=content))
-        self._apply_history_limit()
+        if self._store and self._conversation_id:
+            msg_id = self._store.add_message(
+                conversation_id=self._conversation_id,
+                branch_id=self._branch_id,
+                role="user",
+                content=content,
+                parent_id=self._active_leaf_id or None,
+            )
+            self._active_leaf_id = msg_id
+            self._store.set_active_leaf(self._conversation_id, self._branch_id, msg_id)
+            return msg_id
+        return None
 
-    def add_assistant_message(self, content: Optional[str] = None, tool_calls: Optional[list[dict]] = None) -> None:
-        """Agrega la respuesta del asistente al historial."""
+    def add_assistant_message(self, content: Optional[str] = None, tool_calls: Optional[list[dict]] = None) -> Optional[int]:
+        """Agrega la respuesta del asistente al historial.
+        Si hay store vinculado, también persiste en SQLite.
+        Retorna el message_id si se persistió, None si no."""
         self._messages.append(Message(role="assistant", content=content, tool_calls=tool_calls))
-        self._apply_history_limit()
+        if self._store and self._conversation_id:
+            msg_id = self._store.add_message(
+                conversation_id=self._conversation_id,
+                branch_id=self._branch_id,
+                role="assistant",
+                content=content or "",
+                tool_calls=tool_calls,
+                parent_id=self._active_leaf_id,
+                token_count=self._token_counter.count_text(content) if content and self._token_counter else 0,
+            )
+            self._active_leaf_id = msg_id
+            self._store.set_active_leaf(self._conversation_id, self._branch_id, msg_id)
+            return msg_id
+        return None
 
     def add_tool_message(self, content: str, tool_call_id: str) -> None:
         """Agrega la respuesta de una herramienta al historial."""
         self._messages.append(Message(role="tool", content=content, tool_call_id=tool_call_id))
-        self._apply_history_limit()
 
     def get_context_messages(self) -> list[dict]:
         """
@@ -124,92 +205,13 @@ class ChatMemory:
         return context_msgs
 
     # ------------------------------------------------------------------
-    # Límite del historial
-    # ------------------------------------------------------------------
-
-    def _apply_history_limit(self) -> None:
-        """
-        Si el historial (sin contar system prompt) excede el límite,
-        elimina los mensajes más antiguos preservando el system
-        prompt y los últimos mensajes importantes.
-        """
-        if self._history_limit <= 0:
-            return
-
-        # Contar mensajes que no sean system
-        non_system = [m for m in self._messages if m.role != "system"]
-        if len(non_system) <= self._history_limit:
-            return
-
-        # Cuántos eliminar
-        excess = len(non_system) - self._history_limit
-
-        # Preservar system prompt + mensajes recientes
-        # Eliminar los 'excess' mensajes no-system más antiguos
-        kept_non_system = non_system[excess:]  # elimina los primeros 'excess'
-        self._messages = [
-            m for m in self._messages if m.role == "system"
-        ] + kept_non_system
-
-    # ------------------------------------------------------------------
-    # Auto-trim por contexto (tokens)
-    # ------------------------------------------------------------------
-
-    def trim_to_token_budget(
-        self,
-        max_context_tokens: int,
-        reserve_tokens: int,
-        count_fn: callable,
-    ) -> int:
-        """
-        Recorta el historial hasta que quepa en el presupuesto de
-        tokens. Usa el callable count_fn para estimar tokens.
-
-        Args:
-            max_context_tokens: límite duro (n_ctx)
-            reserve_tokens: tokens a reservar para la respuesta
-            count_fn: función que recibe texto y retorna cantidad
-                      de tokens aproximada
-
-        Returns:
-            cantidad de mensajes eliminados
-        """
-        if not self._auto_trim:
-            return 0
-
-        budget = max_context_tokens - reserve_tokens
-        if budget <= 0:
-            return 0
-
-        removed = 0
-        # Calcular tokens totales del historial actual
-        total_tokens = sum(
-            count_fn(msg.content) for msg in self._messages
-        )
-
-        # Mientras excedamos el presupuesto, eliminar mensajes
-        # antiguos (pero preservar system prompt)
-        while total_tokens > budget and len(self._messages) > 2:
-            # Buscar el mensaje no-system más antiguo
-            for i, msg in enumerate(self._messages):
-                if msg.role != "system":
-                    removed_tokens = count_fn(self._messages[i].content)
-                    del self._messages[i]
-                    total_tokens -= removed_tokens
-                    removed += 1
-                    break
-
-        return removed
-
-    # ------------------------------------------------------------------
     # Reset y limpieza
     # ------------------------------------------------------------------
 
     def clear(self) -> None:
         """Limpia todo el historial excepto el system prompt."""
-        self._messages = [
-            Message(role="system", content=self._system_prompt)
-        ]
+        self._messages.clear()
+        self._messages.append(Message(role="system", content=self._system_prompt))
 
     def reset(self) -> None:
         """Alias de clear()."""

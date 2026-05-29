@@ -19,6 +19,7 @@ from typing import Callable, Optional
 
 from ..types import (
     ConfigSchema,
+    CharacterLoadResult,
     IdentityDNA,
     PersonalityDNA,
     SpeechDNA,
@@ -32,6 +33,7 @@ from ..types import (
     Genome,
 )
 from ..compiler import CharacterCompiler
+from ..exceptions import LoadCancelledError
 
 
 class CharacterManager:
@@ -74,9 +76,11 @@ class CharacterManager:
         self._psychology_manager = None
         self._genome: Optional[Genome] = None
         self._core_identity = None
+        self._loading: bool = False
+        self._cancel_loading: bool = False
+        self._load_logs: list[str] = []
 
         self._compiler = CharacterCompiler(self)
-        self._chat_chroma = None
 
     @property
     def is_loaded(self) -> bool:
@@ -86,6 +90,19 @@ class CharacterManager:
     def character_name(self) -> Optional[str]:
         return self._character_name
 
+    @property
+    def loading(self) -> bool:
+        return self._loading
+
+    def cancel_load(self) -> None:
+        """Solicita cancelación de la carga en curso (thread-safe, non-blocking)."""
+        self._cancel_loading = True
+
+    def _check_cancel(self) -> None:
+        """Lanzar LoadCancelledError si se solicitó cancelación."""
+        if self._cancel_loading:
+            raise LoadCancelledError("Carga cancelada por nueva solicitud")
+
     def check_needs_rebuild(self, prompt: str) -> bool:
         import hashlib
         if self._needs_rebuild:
@@ -93,41 +110,96 @@ class CharacterManager:
         current_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
         return current_hash != self._cached_prompt_hash
 
-    def list_characters(self) -> list[str]:
+    def list_characters(self) -> list[dict]:
         if not self._base_dir.exists():
             return []
 
         chars = []
         for d in self._base_dir.iterdir():
-            if d.is_dir() and (d / "dna").exists():
-                chars.append(d.name)
-        return sorted(chars)
+            if not d.is_dir() or not (d / "dna").exists():
+                continue
+            name = d.name
+            entry = {"name": name, "role": "", "background": "", "has_soul": False}
 
-    def load_character(self, name: str) -> None:
+            identity_data = self._read_json_dict(d / "dna" / "identity.json")
+            entry["role"] = identity_data.get("role", "")
+            entry["background"] = identity_data.get("background", "")
+
+            entry["has_soul"] = (d / "soul" / "soul.json").exists()
+
+            chars.append(entry)
+
+        return sorted(chars, key=lambda c: c["name"])
+
+    def load_character(self, name: str) -> CharacterLoadResult:
         with self._lock:
-            char_dir = self._base_dir / name
-            if not char_dir.exists() or not (char_dir / "dna").exists():
-                raise ValueError(f"Personaje '{name}' no encontrado en {self._base_dir}")
+            self._loading = True
+            self._cancel_loading = False
+            self._load_logs = []
+            result = CharacterLoadResult(character_name=name)
 
-            self._character_name = name
-            self._char_dir = char_dir
-            self._prompt_dirty = True
+            try:
+                char_dir = self._base_dir / name
+                if not char_dir.exists() or not (char_dir / "dna").exists():
+                    raise ValueError(f"Personaje '{name}' no encontrado en {self._base_dir}")
 
-            self._ensure_dir(self._char_dir / "memory")
-            self._ensure_dir(self._char_dir / "memory" / "episodes")
-            self._ensure_dir(self._char_dir / "state")
-            self._ensure_dir(self._char_dir / "mods")
+                self._character_name = name
+                self._char_dir = char_dir
+                self._prompt_dirty = True
 
-            self._load_dna()
-            self._load_memory()
-            self._load_latest_episode()
-            self._load_state()
-            self._load_mods()
+                self._ensure_dir(self._char_dir / "memory")
+                self._ensure_dir(self._char_dir / "memory" / "episodes")
+                self._ensure_dir(self._char_dir / "state")
+                self._ensure_dir(self._char_dir / "mods")
 
-            self._init_soul_accessor()
-            self._init_chat_chroma()
+                self._check_cancel()
+                self._load_dna()
 
-            self._log("CHAR", f"Personaje '{name}' cargado exitosamente.")
+                self._check_cancel()
+                self._load_memory()
+
+                self._check_cancel()
+                self._load_latest_episode()
+
+                self._check_cancel()
+                self._load_state()
+
+                self._check_cancel()
+                self._load_mods()
+
+                self._check_cancel()
+                self._init_soul_accessor()
+
+                result.soul_active = (
+                    self._soul_accessor is not None
+                    and self._soul_accessor.is_active
+                )
+                result.psychology_active = self._psychology_manager is not None
+
+                self._log("CHAR", f"Personaje '{name}' cargado exitosamente.")
+
+            except LoadCancelledError:
+                result.success = False
+                result.error = "Carga cancelada por nueva solicitud"
+                self._log("CHAR", f"Carga de '{name}' cancelada.")
+
+            except Exception as e:
+                result.success = False
+                result.error = str(e)
+                raise
+
+            finally:
+                result.logs = list(self._load_logs)
+                self._last_load_result = result
+                self._loading = False
+                self._cancel_loading = False
+                self._load_logs = []
+
+            return result
+
+    @property
+    def last_load_result(self) -> Optional[CharacterLoadResult]:
+        return getattr(self, '_last_load_result', None)
 
     def create_character(
         self, name: str,
@@ -243,3 +315,5 @@ class CharacterManager:
 
     def _log(self, tag: str, message: str) -> None:
         self._logger_fn(tag, message)
+        if self._loading:
+            self._load_logs.append(f"[{tag}] {message}")

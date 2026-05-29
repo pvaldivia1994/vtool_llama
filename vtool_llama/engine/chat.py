@@ -103,38 +103,7 @@ VToolLlama._inject_soul_context_into_messages = _inject_soul_context_into_messag
 def _inject_chat_memory_into_messages(
     self: VToolLlama, messages: list[dict], user_prompt: str
 ) -> list[dict]:
-    if not self._character_manager:
-        return messages
-
-    limit = getattr(self._config, "chat_memory_retrieval_limit", 3)
-    if limit <= 0:
-        return messages
-
-    relevant_turns = self._character_manager.retrieve_relevant_chat(user_prompt, top_k=limit)
-    if not relevant_turns:
-        return messages
-
-    relevant_turns = [t for t in relevant_turns if t.get("similarity", 0) > 0.35]
-    if not relevant_turns:
-        return messages
-
-    context_lines = []
-    for t in relevant_turns:
-        doc = t.get("document", "")
-        if doc:
-            context_lines.append(f"[{t.get('metadata', {}).get('timestamp', 'Pasado')}] {doc}")
-
-    if context_lines:
-        context_str = "\n".join(context_lines)
-        injection = f"\n\n[CONTEXTO: Recuerdos de conversaciones pasadas que podrían ser relevantes para responder ahora:]\n{context_str}\n"
-
-        for i in range(len(messages) - 1, -1, -1):
-            if messages[i].get("role") == "user":
-                messages[i] = dict(messages[i])
-                messages[i]["content"] += injection
-                self._log_info(f"🧠 [ChatMemory] Se inyectaron {len(context_lines)} turnos pasados al contexto.")
-                break
-
+    """Deprecado — el ContextBuilder maneja la recuperación de contexto."""
     return messages
 
 VToolLlama._inject_chat_memory_into_messages = _inject_chat_memory_into_messages
@@ -259,7 +228,6 @@ def chat(
 
             if loop_count == 1:
                 self._inject_soul_context_into_messages(messages, prompt)
-                self._inject_chat_memory_into_messages(messages, prompt)
 
             if system_injection and loop_count == 1:
                 if messages and messages[-1].get("role") == "user":
@@ -364,8 +332,7 @@ def chat(
                 self._short_memory.append({"role": "assistant", "content": response_text})
                 self._log_generation_stats()
 
-                if response_text:
-                    self._character_manager.save_chat_turn(prompt, response_text)
+                self._auto_save_if_needed()
 
                 return response_text
 
@@ -435,7 +402,6 @@ def stream_chat(
 
             if loop_count == 1:
                 self._inject_soul_context_into_messages(messages, prompt)
-                self._inject_chat_memory_into_messages(messages, prompt)
 
             if system_injection and loop_count == 1:
                 if messages and messages[-1].get("role") == "user":
@@ -546,9 +512,9 @@ def stream_chat(
                 self._memory.add_assistant_message(content=full_response or None, tool_calls=None)
                 if full_response:
                     self._short_memory.append({"role": "assistant", "content": full_response})
-                    self._character_manager.save_chat_turn(prompt, full_response)
 
                 self._log_generation_stats()
+                self._auto_save_if_needed()
                 return
 
             except ModelNotLoadedError:
@@ -604,6 +570,7 @@ def chat_with_thinking(
 
             self._memory.add_assistant_message(full_history_content)
             self._log_generation_stats()
+            self._auto_save_if_needed()
 
             return thinking, content
 
@@ -711,6 +678,7 @@ def stream_chat_with_thinking(
             self._record_stats_from_stream(stream, full_response)
             self._memory.add_assistant_message(full_response)
             self._log_generation_stats()
+            self._auto_save_if_needed()
 
         except ModelNotLoadedError:
             raise

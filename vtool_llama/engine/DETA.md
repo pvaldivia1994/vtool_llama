@@ -32,7 +32,7 @@ Define `VToolLlama`, la clase principal. Constructor inicializa todos los gestor
 
 | Método | Rol |
 |--------|-----|
-| `__init__(config_path, auto_load)` | Inicializa ConfigManager → LoggerManager → ChatMemory → StatsManager → ModelManager → CharacterManager → ToolExecutionManager → SoulGenerator → SlashCommandRegistry. Carga modelo si `auto_load=True` |
+| `__init__(config_path, auto_load)` | Inicializa ConfigManager → LoggerManager → ChatMemory → StatsManager → ModelManager → CharacterManager (con `characters_directory` de config si existe) → ToolExecutionManager → SoulGenerator → SlashCommandRegistry. Carga modelo si `auto_load=True` |
 | `load_model(path)` / `unload_model()` / `switch_model(path)` / `reload_model()` | Delega en `ModelManager` |
 | `get_model_info()` / `list_available_models()` / `supports_tools()` | Consultas de capacidad del modelo |
 | `get_config()` / `reload_config()` | Configuración |
@@ -71,7 +71,7 @@ Define `VToolLlama`, la clase principal. Constructor inicializa todos los gestor
 
 | Método | Rol |
 |--------|-----|
-| `load_character(name)` | Carga personaje + mergea config + warmup KV Cache dual (Base + Full) |
+| `load_character(name) → CharacterLoadResult` | Cancela carga previa, carga personaje + mergea config + warmup KV Cache dual (Base + Full). Retorna resultado con logs, soul_active, psychology_active |
 | `create_character(...)` | Crea estructura de directorios |
 | `generate_character_with_ai(name, prompt)` | Usa LLM para generar personaje completo |
 | `generate_character_soul(...)` | Genera alma (delega en SoulGenerator) |
@@ -162,16 +162,56 @@ Logging a archivo con rotación diaria + debug en consola con colores.
 | `count_tokens_exact(text, tokenize_fn)` | Conteo exacto con tokenizer del modelo |
 | `is_context_near_limit(current, max, reserve)` | Determina si el contexto está cerca del límite |
 
+### `retrieval.py` — Estrategias de Recuperación
+
+Estrategias independientes que implementan `RetrievalStrategy.retrieve()`. Usadas por ContextBuilder.
+
+| Estrategia | Prioridad | Qué trae |
+|---|---|---|
+| `SummaryStrategy` | 20 | Últimos N summaries del branch activo (comprimidos por token_budget) |
+| `SemanticMemoryStrategy` | 30 | Memorias importantes desde SQLite (type, content, importance) |
+| `RecentMessagesStrategy` | 50 | Mensajes activos del path hasta leaf, recortados por token_budget |
+
+### `context_builder.py` — Orquestador de Contexto
+
+Coordina las estrategias de retrieval para ensamblar el prompt final. NO implementa retrieval directamente.
+
+```python
+ContextBuilder
+├── build(conv_id, branch, leaf, token_budget, system_prompt) → list[PromptSection]
+├── build_messages(...) → list[dict]  # wrapper directo para el LLM
+└── get_section_breakdown(...) → list[dict]  # debug: tokens por sección
+```
+
+**Flujo:**
+1. System prompt → PromptSection priority=0
+2. Cada estrategia en orden de priority
+3. Consolidar en list[dict]
+4. Guardar context_snapshot si debug
+
+### `chat_memory.py` — ChatMemory (actualizado)
+
+Sigue siendo un ring buffer en RAM, pero ahora puede sincronizar con SQLite:
+
+| Método nuevo | Rol |
+|---|---|
+| `bind_store(store, builder, counter, conv_id, branch, leaf)` | Vincula al SQLite event store |
+| `load_context(token_budget)` | Reconstruye el buffer desde ContextBuilder |
+| `add_user_message(content)` | También persiste en SQLite + actualiza active_leaf |
+| `add_assistant_message(content, tool_calls)` | También persiste en SQLite + actualiza active_leaf |
+
 ## Dependencias
 
 | Módulo | Importa desde |
 |--------|---------------|
-| `base.py` | `chat_memory`, `config_manager`, `logger_manager`, `stats_manager`, `slash_registry`, `model`, `character`, `soul`, `tools` |
+| `base.py` | `chat_memory`, `config_manager`, `logger_manager`, `stats_manager`, `slash_registry`, `model`, `character`, `soul`, `tools`, `db`, `utils` |
 | `chat.py` | `base`, `tools`, `exceptions` |
-| `character.py` | `base`, `tools` |
-| `memory.py` | `base`, `tokenizer_utils` |
+| `character.py` | `base`, `tools`, `db`, `utils`, `context_builder`, `retrieval` |
+| `memory.py` | `base` |
 | `internal.py` | `base` |
 | `slash_commands.py` | `base` |
+| `context_builder.py` | `retrieval` |
+| `retrieval.py` | `db`, `utils` |
 
 ## Flujo de Inicialización
 
@@ -182,9 +222,26 @@ VToolLlama.__init__()
 ├── ChatMemory(system_prompt, ...) → historial
 ├── StatsManager()                 → estadísticas
 ├── ModelManager(config, ...)      → modelo (si auto_load)
-├── CharacterManager(logger_fn)    → personajes
+├── CharacterManager(base_dir, logger_fn) → personajes
 ├── ToolExecutionManager(...)      → tools
 ├── SoulGenerator(...)             → alma
 ├── SlashCommandRegistry()         → slash commands
 └── _register_default_slash_commands()
+
+VToolLlama.load_character(name)
+├── CharacterManager.load()
+├── ChatStore(db_path)             → SQLite event store
+├── TokenCounter(tokenize_fn)      → contador centralizado
+├── ContextBuilder(store, counter, strategies) → orquestador
+├── ChatMemory.bind_store()        → vincula al store
+├── Config merge + KV warmup
+├── ChatMemory.load_context()      → reconstruye desde SQLite vía ContextBuilder
+└── Personality injection
+
+VToolLlama.chat(prompt)
+├── ChatMemory.add_user_message()  → escribe a SQLite + RAM
+├── ModelManager.generate(messages) → infiere
+├── ChatMemory.add_assistant_message() → escribe a SQLite + RAM
+├── Auto-summary cada N turnos     → SQLite summaries
+└── Memory extraction (opt-in)     → SQLite memories
 ```

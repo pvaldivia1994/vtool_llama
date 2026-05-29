@@ -64,3 +64,9 @@ class ConfigSchema:
     auto_unload_model: bool = False
     short_memory_limit: int = 5
     chat_memory_retrieval_limit: int = 3
+    characters_directory: str = ""
+    chat_memory_limit: int = 25
+    auto_summary_interval: int = 10
+    auto_summary_reason: str = "interval"
+    semantic_memory_enabled: bool = False
+    context_snapshot_debug: bool = False

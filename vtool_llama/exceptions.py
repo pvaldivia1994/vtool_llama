@@ -91,3 +91,12 @@ class ContextOverflowError(VToolLlamaError):
     recuperar automáticamente con auto_trim_context.
     """
     pass
+
+
+class LoadCancelledError(VToolLlamaError):
+    """
+    La carga de un personaje fue cancelada externamente
+    (nueva solicitud de carga, refresh de página, etc.).
+    Interna — no se propaga al usuario final.
+    """
+    pass

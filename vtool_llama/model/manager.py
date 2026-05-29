@@ -38,5 +38,9 @@ class ModelManager:
         return self._model is not None
 
     @property
+    def loading(self) -> bool:
+        return self._loading
+
+    @property
     def tokenize_fn(self) -> Optional[Callable]:
         return self._tokenize_fn

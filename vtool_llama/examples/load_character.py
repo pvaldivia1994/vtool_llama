@@ -20,24 +20,14 @@ def select_character(llm: VToolLlama) -> str:
         sys.exit(1)
 
     print("\nPersonajes disponibles:")
-    for i, name in enumerate(chars, 1):
-        dna_dir = os.path.join(
-            os.path.dirname(__file__), '..', 'personajes', name, 'dna'
-        )
-        identity_path = os.path.join(dna_dir, 'identity.json')
-        if os.path.exists(identity_path):
-            import json
-            with open(identity_path, encoding='utf-8') as f:
-                ident = json.load(f)
-            rol = ident.get('role', '')
-            fondo = ident.get('background', '')
-            desc = f" — {rol}" if rol else ""
-            if fondo:
-                desc += f" ({fondo})"
-        else:
-            desc = ""
+    for i, c in enumerate(chars, 1):
+        desc = f" — {c['role']}" if c['role'] else ""
+        if c['background']:
+            desc += f" ({c['background']})"
+        soul = " [ALMA]" if c['has_soul'] else ""
+        print(f"  {i}. {c['name']}{desc}{soul}")
 
-        print(f"  {i}. {name}{desc}")
+    names = [c["name"] for c in chars]
 
     while True:
         try:
@@ -47,9 +37,9 @@ def select_character(llm: VToolLlama) -> str:
             if choice.isdigit():
                 idx = int(choice) - 1
                 if 0 <= idx < len(chars):
-                    return chars[idx]
+                    return chars[idx]["name"]
             else:
-                if choice in chars:
+                if choice in names:
                     return choice
             print(f"Opción inválida. Elegí entre 1-{len(chars)} o un nombre.")
         except (ValueError, IndexError):

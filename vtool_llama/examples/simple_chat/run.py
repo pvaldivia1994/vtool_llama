@@ -15,6 +15,12 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
+# Asegurar que el directorio raíz del proyecto esté en sys.path
+# run.py está en vtool_llama/examples/simple_chat/, subimos 4 niveles hasta la raíz del repo
+_project_root = Path(__file__).resolve().parent.parent.parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
 
 def check_python_version():
     """Verifica que Python 3.11+ esté instalado."""
@@ -46,14 +52,14 @@ def check_dependencies():
         sys.exit(1)
 
 
-def check_personajes_dir():
+def check_characters_dir():
     """Verifica que el directorio de personajes exista."""
     base_dir = Path(__file__).parent
-    personajes_dir = base_dir / "personajes"
+    characters_dir = base_dir.parent.parent / "characters"
 
-    if not personajes_dir.exists():
+    if not characters_dir.exists():
         print(f"⚠️  Advertencia: Directorio de personajes no encontrado")
-        print(f"   Esperado: {personajes_dir}")
+        print(f"   Esperado: {characters_dir}")
         response = input("\n¿Quieres especificar otra ruta? (s/n): ").strip().lower()
         if response == 's':
             custom_path = input("Ruta personalizada: ").strip()
@@ -64,14 +70,14 @@ def check_personajes_dir():
                 sys.exit(1)
         else:
             print("⚠️  Continuando sin verificación de personajes...")
-            return personajes_dir
+            return characters_dir
     else:
-        personajes = list(personajes_dir.iterdir())
-        if personajes:
-            print(f"✓ Directorio de personajes encontrado ({len(personajes)} personajes)")
+        chars = list(characters_dir.iterdir())
+        if chars:
+            print(f"✓ Directorio de personajes encontrado ({len(chars)} personajes)")
         else:
             print(f"⚠️  Directorio de personajes existe pero está vacío")
-        return personajes_dir
+        return characters_dir
 
 
 def check_cuda():
@@ -137,7 +143,7 @@ def main():
     print("\n=== Verificando Dependencias ===")
     check_python_version()
     check_dependencies()
-    personajes_dir = check_personajes_dir()
+    characters_dir = check_characters_dir()
     cuda_available = check_cuda()
 
     # Config del servidor
@@ -157,7 +163,7 @@ def main():
     print(f"\n=== Configuración Final ===")
     print(f"Host: {host}")
     print(f"Puerto: {port}")
-    print(f"Personajes: {personajes_dir}")
+    print(f"Personajes: {characters_dir}")
     print(f"CUDA: {'✓' if cuda_available else '✗'}")
 
     url = f"http://{host if host != '0.0.0.0' else 'localhost'}:{port}"

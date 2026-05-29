@@ -37,7 +37,7 @@ from vtool_llama import VToolLlama
 # ============================================================================
 
 BASE_DIR = Path(__file__).parent
-PERSONAJES_DIR = BASE_DIR.parent.parent / "personajes"  # Apunta a vtool_llama/personajes/
+CHARACTERS_DIR = BASE_DIR.parent.parent / "characters"
 STATIC_DIR = BASE_DIR  # index.html está en simple_chat/
 
 
@@ -134,7 +134,7 @@ async def list_characters():
         result = []
         for name in chars:
             # Leer identity.json si existe
-            dna_dir = PERSONAJES_DIR / name / "dna"
+            dna_dir = CHARACTERS_DIR / name / "dna"
             identity_path = dna_dir / "identity.json"
 
             char_info = CharacterInfo(name=name)
@@ -150,7 +150,7 @@ async def list_characters():
                     print(f"Error leyendo {identity_path}: {e}")
 
             # Verificar si tiene soul
-            soul_path = PERSONAJES_DIR / name / "soul" / "soul.json"
+            soul_path = CHARACTERS_DIR / name / "soul" / "soul.json"
             char_info.has_soul = soul_path.exists()
 
             result.append(char_info)

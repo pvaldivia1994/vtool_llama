@@ -227,7 +227,7 @@ def main():
         llm.generate_character_with_ai(name=name, prompt=prompt)
 
         print("\n\u2705 \u00a1System prompt generado!")
-        print(f"Archivos guardados en personajes/{name}/")
+        print(f"Archivos guardados en characters/{name}/")
 
         cargar = input(f"\n\u00bfIniciar sesi\u00f3n con {name}? (s/n): ").strip().lower()
         if cargar in ('s', 'y'):

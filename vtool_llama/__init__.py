@@ -32,6 +32,7 @@ from .exceptions import (
     EmptyPromptError,
     InferenceError,
     InvalidModelError,
+    LoadCancelledError,
     ModelNotFoundError,
     ModelNotLoadedError,
     OOMError,
@@ -39,6 +40,8 @@ from .exceptions import (
 )
 from .engine.slash_registry import SlashCommandRegistry
 from .character import CharacterManager
+from .db import ChatStore
+from .types.character import CharacterLoadResult
 from .types import (
     ConfigSchema,
     GenerationStats,
@@ -105,6 +108,7 @@ __all__ = [
     "ConfigError",
     "ContextOverflowError",
     "InferenceError",
+    "LoadCancelledError",
     "ModelNotLoadedError",
     # Tipos
     "ConfigSchema",
@@ -119,6 +123,7 @@ __all__ = [
     "RuntimeState",
     "RelationshipState",
     "PersonalityState",
+    "CharacterLoadResult",
     "CharacterMod",
     # Tipos v2
     "Genome",

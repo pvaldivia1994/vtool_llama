@@ -59,7 +59,8 @@ from vtool_llama import VToolLlama
 llm = VToolLlama()
 
 # Ver qué personajes existen
-print("Personajes:", llm.list_characters())
+for c in llm.list_characters():
+    print(f"{c['name']} — {c['role']} [Alma: {c['has_soul']}]")
 
 # Cargar un personaje (activa Psychology Engine automáticamente)
 llm.load_character("default")
@@ -132,7 +133,7 @@ Genome (13 ejes de temperamento innato)
 
 | Método | Descripción |
 |--------|-------------|
-| `list_characters()` | Lista nombres de personajes disponibles |
+| `list_characters()` | Lista personajes con nombre, rol, background y estado del alma |
 | `load_character(name)` | Inicializa personaje + KV Cache + Psychology Engine + Core Identity |
 | `create_character(...)` | Crea estructura de directorios y JSONs del DNA |
 | `generate_character_with_ai(name, prompt)` | Usa el LLM para autogenerar el DNA completo |
@@ -223,7 +224,8 @@ Genome (13 ejes de temperamento innato)
   "enable_logging": true,
   "enable_console_debug": false,
   "auto_unload_model": false,
-  "model_idle_timeout": 600
+  "model_idle_timeout": 600,
+  "characters_directory": ""
 }
 ```
 

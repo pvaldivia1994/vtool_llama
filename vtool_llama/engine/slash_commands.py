@@ -63,6 +63,22 @@ def _register_default_slash_commands(self: VToolLlama) -> None:
         "episodes", self._cmd_episodes,
         "Lista todos los episodios guardados. Uso: /episodes [load N | delete N]",
     )
+    self._slash_commands.register(
+        "history", self._cmd_history,
+        "Muestra los últimos mensajes del chat. Uso: /history [N=10]",
+    )
+    self._slash_commands.register(
+        "autosave", self._cmd_autosave,
+        "Activa auto-guardado cada N mensajes. Uso: /autosave <N> (0 = desactivar)",
+    )
+    self._slash_commands.register(
+        "semantic", self._cmd_semantic,
+        "Indexa la conversación en ChromaDB. Uso: /semantic [rebuild]",
+    )
+    self._slash_commands.register(
+        "clean", self._cmd_clean,
+        "Limpia todo el historial de chat de la sesión actual.",
+    )
 
 VToolLlama._register_default_slash_commands = _register_default_slash_commands
 
@@ -177,28 +193,123 @@ def _cmd_episodes(self: VToolLlama, args: str) -> str:
     if len(parts) == 2 and parts[0] == "load":
         try:
             ep_id = int(parts[1])
-            self._character_manager.load_episode(ep_id)
-            self._inject_personality_into_system_prompt()
-            return f"✓ Episodio #{ep_id} restaurado (rollback)."
+            self.load_episode(ep_id)
+            return f"✓ Episodio #{ep_id} restaurado (checkout no destructivo)."
         except (ValueError, Exception) as e:
             return f"Error: {e}"
 
     if len(parts) == 2 and parts[0] == "delete":
         try:
             ep_id = int(parts[1])
-            ok = self._character_manager.delete_episode(ep_id)
+            ok = self.delete_episode(ep_id)
             return f"✓ Episodio #{ep_id} eliminado." if ok else f"Episodio #{ep_id} no encontrado."
         except (ValueError, Exception) as e:
             return f"Error: {e}"
 
-    episodes = self._character_manager.list_episodes()
+    episodes = self.list_episodes()
     if not episodes:
         return "No hay episodios guardados."
-    lines = ["Episodios guardados:"]
+    lines = ["📋 Episodios guardados:"]
     for ep in episodes:
-        current = " ← actual" if (self._character_manager.current_episode and ep["episode_id"] == self._character_manager.current_episode.episode_id) else ""
-        lines.append(f"  #{ep['episode_id']:03d} [{ep['timestamp'][:16]}] ({ep['message_count']} msgs) {ep['summary']}{current}")
-    lines.append("\nUso: /episodes load N | /episodes delete N")
+        ts = ep.get('timestamp', '')
+        try:
+            from datetime import datetime
+            dt = datetime.fromisoformat(ts)
+            fecha = dt.strftime("%d/%m/%y %H:%M")
+        except Exception:
+            fecha = ts[:16] if ts else "?"
+
+        topic = f" [{ep.get('topic', '')}]" if ep.get('topic') else ""
+        msgs = ep.get('message_count', 0)
+        summary = ep['summary'] + "…" if len(ep['summary']) >= 80 else ep['summary']
+        lines.append(f"  #{ep['episode_id']:03d}  {fecha}{topic}  ({msgs} msgs)")
+        lines.append(f"      {summary}")
+    lines.append("")
+    lines.append("  /episodes load N   — Volver al episodio N")
+    lines.append("  /episodes delete N — Eliminar episodio N")
     return "\n".join(lines)
 
 VToolLlama._cmd_episodes = _cmd_episodes
+
+
+def _cmd_history(self: VToolLlama, args: str) -> str:
+    try:
+        n = max(1, min(50, int(args.strip()))) if args.strip() else 10
+    except ValueError:
+        n = 10
+
+    history = self.get_chat_history(limit=n)
+    if not history:
+        return "No hay historial de chat."
+
+    lines = [f"📜 Últimos {len(history)} mensajes:"]
+    for msg in history:
+        role = "👤" if msg["role"] == "user" else "🤖" if msg["role"] == "assistant" else "🔧"
+        content = msg["content"][:120] + "…" if len(msg["content"]) > 120 else msg["content"]
+        lines.append(f"  {role} {content}")
+    return "\n".join(lines)
+
+VToolLlama._cmd_history = _cmd_history
+
+
+def _cmd_autosave(self: VToolLlama, args: str) -> str:
+    try:
+        n = int(args.strip())
+    except (ValueError, AttributeError):
+        return "Uso: /autosave <N> (cada N mensajes, 0 = desactivar)"
+
+    self.active_auto_save_at(n)
+    return f"✓ Auto-save {'activado' if n > 0 else 'desactivado'} cada {n} mensajes." if n > 0 else "✓ Auto-save desactivado."
+
+VToolLlama._cmd_autosave = _cmd_autosave
+
+
+def _cmd_semantic(self: VToolLlama, args: str) -> str:
+    if not self._semantic_chroma:
+        return "ChromaDB no configurado. Usá semantic_memory=True al cargar el personaje."
+
+    rebuild = args.strip().lower() == "rebuild"
+    try:
+        count = self.index_conversation(incremental=not rebuild)
+        return f"✓ Indexados {count} chunks semánticos{' (rebuild completo)' if rebuild else ''}."
+    except Exception as e:
+        return f"Error indexando: {e}"
+
+VToolLlama._cmd_semantic = _cmd_semantic
+
+
+def _cmd_clean(self: VToolLlama, args: str) -> str:
+    # 1) Limpiar RAM
+    self._memory.clear()
+
+    # 2) Limpiar SQLite (soft-delete todos los mensajes activos)
+    if self._chat_store and self._memory._conversation_id:
+        msgs = self._chat_store.get_branch_messages(
+            self._memory._conversation_id, self._memory._branch_id, limit=5000
+        )
+        for m in msgs:
+            if m.status == "active":
+                self._chat_store.soft_delete_message(m.id)
+        self._chat_store.mark_semantic_dirty(self._memory._conversation_id)
+
+    # 3) Limpiar ChromaDB semántico
+    if self._semantic_chroma and self._semantic_chroma.is_available:
+        self._semantic_chroma.clear()
+
+    # 4) Limpiar memorias persistentes (long_term.json)
+    if self._character_manager:
+        self._character_manager.memories.clear()
+        self._character_manager._needs_rebuild = True
+        self._character_manager.save_state()
+
+    # 5) Resetear active_leaf
+    if self._memory._conversation_id and self._chat_store:
+        self._chat_store.set_active_leaf(
+            self._memory._conversation_id, self._memory._branch_id, 0
+        )
+    self._memory._active_leaf_id = 0
+
+    self._log_info("Memoria limpiada completamente (RAM + SQLite + ChromaDB + long_term).")
+    return "🧹 Memoria limpiada completamente."
+
+VToolLlama._cmd_clean = _cmd_clean

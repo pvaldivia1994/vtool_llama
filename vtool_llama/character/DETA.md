@@ -40,16 +40,22 @@ Define `CharacterManager`, el orquestador central. Responsabilidades:
 
 | Método | Rol |
 |--------|-----|
-| `__init__()` | Inicializa todas las capas (DNA, memoria, estado, mods, compilador, ChromaDB) |
-| `load_character(name)` | Carga un personaje completo desde disco |
+| `__init__()` | Inicializa todas las capas (DNA, memoria, estado, mods, compilador, ChromaDB). Acepta `base_dir` opcional para ruta de personajes |
+| `load_character(name) → CharacterLoadResult` | Carga un personaje completo desde disco. Retorna resultado con logs, estados y éxito |
 | `create_character(...)` | Crea estructura de directorios + archivos iniciales |
 | `build_system_prompt(...)` | Delega en `CharacterCompiler` para ensamblar el prompt final |
 | `build_base_system_prompt(...)` | Prompt base para KV Cache (solo DNA) |
 | `compile_base_soul_prompt(...)` | Prompt base + Soul System |
 | `get_relevant_memories()` | Memorias ordenadas por prioridad |
+| `cancel_load()` | Solicita cancelación de la carga en curso (thread-safe, non-blocking) |
+| `_check_cancel()` | Lanza `LoadCancelledError` si `_cancel_loading=True`. Llamado entre cada paso de `load_character` |
 | I/O utils | `_ensure_dir`, `_read_json_dict`, `_read_json`, `_write_json`, `_log` |
 
-**Propiedades**: `is_loaded`, `character_name`, `check_needs_rebuild(prompt)`
+**Propiedades**: `is_loaded`, `character_name`, `loading` (True durante carga), `last_load_result` (último result, incluso si falló), `check_needs_rebuild(prompt)`
+
+**Log capture**: `_log()` acumula mensajes en `_load_logs` cuando `_loading=True`. Al finalizar carga, los logs se copian a `CharacterLoadResult.logs` y se limpia el buffer.
+
+**Cancelación**: Si se llama `cancel_load()` (o un nuevo `load_character` desde `VToolLlama`), se activa `_cancel_loading`. Los checkpoints en `load_character` detectan la bandera y abortan limpiamente, retornando `CharacterLoadResult(success=False)`. La excepción `LoadCancelledError` NO se propaga al usuario.
 
 **Uso**: `CharacterManager` es instanciado por `engine/base.py` y accedido vía `VToolLlama.state_manager`.
 
@@ -76,23 +82,17 @@ Snapshots versionados de la conversación (nunca se sobreescriben).
 |--------|-----|
 | `_load_latest_episode()` | Carga el episode_*.json más reciente |
 | `save_episode(messages, summary)` | Crea episode_NNN.json incremental |
-| `list_episodes()` | Lista metadata de todos los episodios |
-| `load_episode(id)` | Rollback: carga un episodio específico + limpia ChromaDB posterior |
+| `list_episodes()` | Lista metadata de todos los episodios desde SQLite o JSON |
+| `load_episode(id)` | Rollback NO destructivo: checkout a summary (SQLite) o carga JSON |
 | `delete_episode(id)` | Elimina un episodio |
 
-Los episodios permiten rollback completo: al cargar uno anterior se eliminan los turnos de ChromaDB creados después de ese timestamp.
+Los episodios se guardan en la tabla `summaries` de SQLite (cuando hay ChatStore) o en archivos JSON como fallback.
 
-### `chat_history.py` — Historial de Chat (ChromaDB)
+### ~~`chat_history.py` — Eliminado~~
 
-Guarda y recupera turnos de conversación en base vectorial para búsqueda semántica.
-
-| Método | Rol |
-|--------|-----|
-| `_init_chat_chroma()` | Inicializa ChromaStore en `memory/chat_history/` |
-| `save_chat_turn(user, assistant)` | Guarda un turno completo como documento |
-| `retrieve_relevant_chat(query, top_k)` | Busca turnos semánticamente similares |
-
-Usa `db.chroma_store.ChromaStore` internamente.
+Reemplazado por `db/chat_store.py` (SQLite event store). El historial de chat ahora se guarda en:
+- `characters/<name>/chat.db` → tabla `messages` (source of truth)
+- ChromaDB ya no guarda turnos de chat, solo memorias semánticas
 
 ### `psychology_init.py` — Inicialización de Sistemas Avanzados
 
@@ -114,7 +114,6 @@ Inicializa el Soul System y Psychology Engine v2 cuando existen los datos corres
 |--------|-----------------|
 | `types/*` | Todos los archivos (dataclasses) |
 | `compiler.CharacterCompiler` | `base.py` |
-| `db.chroma_store.ChromaStore` | `chat_history.py` |
 | `soul.RuntimeSoulAccessor` | `psychology_init.py` |
 | `soul.SoulGenerator` | `psychology_init.py` |
 | `psychology.*` | `psychology_init.py` |

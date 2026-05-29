@@ -31,15 +31,7 @@ def main():
     print("  vtool_llama — Consola de ejemplo interactiva")
     print("=" * 60)
     print()
-    print("Comandos especiales:")
-    print("  /exit      — Salir")
-    print("  /clear     — Limpiar historial")
-    print("  /stream    — Alternar modo streaming")
-    print("  /think     — Alternar mostrar pensamiento (Thinking)")
-    print("  /info      — Info del modelo")
-    print("  /debug     — Alternar debug")
-    print("  /prompt    — Cambiar system prompt")
-    print()
+    print("Comandos: /exit /clear /stream /think /info /debug /prompt /help")
 
     # Inicializar la librería
     llm = VToolLlama(auto_load=False)
@@ -90,7 +82,9 @@ def main():
     # Intentar cargar modelo desde config
     try:
         print("Cargando modelo...")
+        print("  Estado: cargando =", llm.model_loading)
         llm.load_model()
+        print("  Estado: cargando =", llm.model_loading, "(finalizado)")
     except Exception as e:
         print(f"  No se pudo cargar el modelo automáticamente: {e}")
         # Mostrar modelos disponibles
@@ -109,7 +103,9 @@ def main():
 
         if ruta:
             try:
+                print("  Estado: cargando =", llm.model_loading)
                 llm.load_model(ruta)
+                print("  Estado: cargando =", llm.model_loading, "(finalizado)")
             except Exception as e2:
                 print(f"  Error: {e2}")
                 return
@@ -205,8 +201,23 @@ def main():
                 else:
                     print("\033[33mUso: /prompt <nuevo system prompt>\033[0m")
 
+            elif command == "/help":
+                print("\033[33m--- COMANDOS DE CONSOLA ---")
+                print("  /exit              Salir")
+                print("  /clear             Limpiar historial")
+                print("  /stream            Alternar modo streaming")
+                print("  /think             Alternar mostrar pensamiento")
+                print("  /info              Información del modelo")
+                print("  /debug             Alternar debug")
+                print("  /prompt <texto>    Cambiar system prompt")
+                print("  /help              Esta ayuda")
+                print()
+                print("--- COMANDOS DE PERSONAJE ---")
+                print(llm.slash_commands.get_help_text())
+                print("\033[0m")
+
             else:
-                print(f"\033[33mComando desconocido: {command}\033[0m")
+                print(f"\033[33mComando desconocido: {command}. Usá /help para ver los disponibles.\033[0m")
 
             continue
 

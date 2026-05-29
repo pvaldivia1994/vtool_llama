@@ -119,3 +119,17 @@ class CharacterMod:
     target_layer: str = "speech"
     override_value: str = ""
     intensity: float = 1.0
+
+
+# ======================================================================
+# Load Result
+# ======================================================================
+
+@dataclass
+class CharacterLoadResult:
+    success: bool = True
+    character_name: str = ""
+    soul_active: bool = False
+    psychology_active: bool = False
+    logs: list[str] = field(default_factory=list)
+    error: str = ""

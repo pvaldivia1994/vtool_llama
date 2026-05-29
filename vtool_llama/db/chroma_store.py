@@ -134,38 +134,29 @@ class ChromaStore:
         except Exception:
             pass
 
-    def delete_by_metadata(self, where: dict) -> None:
-        """Elimina documentos de la coleccion que coincidan con un filtro de metadatos."""
+    def get_all_documents(self) -> list[dict]:
+        """Retorna todos los documentos de la colección."""
         if not self.is_available:
-            return
+            return []
         try:
-            self._collection.delete(where=where)
-            self._log(f"ChromaDB: Documentos eliminados con filtro where={where}")
+            existing = self._collection.get()
+            if not existing or not existing.get("ids"):
+                return []
+            result = []
+            for i in range(len(existing["ids"])):
+                result.append({
+                    "id": existing["ids"][i],
+                    "document": existing["documents"][i] if i < len(existing.get("documents", [])) else "",
+                    "metadata": existing["metadatas"][i] if i < len(existing.get("metadatas", [])) else {},
+                })
+            return result
         except Exception as e:
-            self._log(f"WARN: Error eliminando documentos en ChromaDB por metadatos (intentando fallback): {e}")
-            try:
-                existing = self._collection.get()
-                if existing and existing.get("ids"):
-                    ids_to_delete = []
-                    for i, meta in enumerate(existing.get("metadatas", [])):
-                        if meta:
-                            if "timestamp" in where and isinstance(where["timestamp"], dict) and "$gt" in where["timestamp"]:
-                                target = where["timestamp"]["$gt"]
-                                val = meta.get("timestamp")
-                                if val and val > target:
-                                    ids_to_delete.append(existing["ids"][i])
-                            else:
-                                match = True
-                                for k, v in where.items():
-                                    if meta.get(k) != v:
-                                        match = False
-                                        break
-                                if match:
-                                    ids_to_delete.append(existing["ids"][i])
-                    if ids_to_delete:
-                        self._collection.delete(ids=ids_to_delete)
-                        self._log(f"ChromaDB Fallback: Eliminados {len(ids_to_delete)} documentos.")
-            except Exception as ex:
-                self._log(f"ERROR: Fallback de borrado ChromaDB falló: {ex}")
+            self._log(f"WARN: Error obteniendo documentos de ChromaDB: {e}")
+            return []
+
+    def close(self) -> None:
+        """Cierra la conexión con ChromaDB."""
+        self._client = None
+        self._collection = None
 
 

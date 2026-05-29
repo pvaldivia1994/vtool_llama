@@ -7,17 +7,22 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from .base import VToolLlama
+from ..db import ChatStore
 from ..tools import TOOL_USAGE_POLICY
+from ..utils import TokenCounter
+from .context_builder import ContextBuilder
+from .retrieval import RecentMessagesStrategy, SemanticRetrievalStrategy
 
 
-def list_characters(self: VToolLlama) -> list[str]:
+def list_characters(self: VToolLlama) -> list[dict]:
     return self._character_manager.list_characters()
 
 VToolLlama.list_characters = list_characters
 
 
-def load_character(self: VToolLlama, name: str) -> None:
-    self._character_manager.load_character(name)
+def load_character(self: VToolLlama, name: str, semantic_memory: bool = False) -> object:
+    self._character_manager.cancel_load()
+    result = self._character_manager.load_character(name)
 
     char_dir = self._character_manager._char_dir
     if char_dir:
@@ -26,21 +31,75 @@ def load_character(self: VToolLlama, name: str) -> None:
             self._log_debug("CONFIG", f"system_prompt overrideado por '{name}/config.json'")
         self._config = merged
 
+    # Inicializar SQLite event store + ContextBuilder
+    if char_dir:
+        db_path = char_dir / "memory" / "chat.db"
+        self._chat_store = ChatStore(str(db_path))
+
+        tokenize_fn = None
+        if self._model_manager.is_loaded:
+            tokenize_fn = self._model_manager.count_tokens
+        self._token_counter = TokenCounter(tokenize_fn=tokenize_fn)
+
+        self._context_builder = ContextBuilder(
+            store=self._chat_store,
+            token_counter=self._token_counter,
+            strategies=[
+                RecentMessagesStrategy(),
+            ],
+        )
+
+        conv = self._chat_store.get_or_create_conversation(name)
+
+        self._memory.bind_store(
+            store=self._chat_store,
+            context_builder=self._context_builder,
+            token_counter=self._token_counter,
+            conversation_id=conv.id,
+            branch_id=conv.active_branch_id,
+            leaf_message_id=conv.active_leaf_message_id,
+        )
+    else:
+        self._chat_store = None
+        self._context_builder = None
+        self._token_counter = None
+
     if char_dir and self._model_manager.is_loaded:
-        base_kv_path = char_dir / "memory" / "base.state"
-        full_kv_path = char_dir / "memory" / "personality_plus_memory.state"
-
         prompt = self._character_manager.build_system_prompt(self._config.system_prompt, self._config)
+        self._warmup_character_cache(prompt)
 
-        if not base_kv_path.exists() or not full_kv_path.exists() or self._character_manager.check_needs_rebuild(prompt):
-            self._warmup_character_cache(prompt)
-        else:
-            self._model_manager.load_kv_state(str(full_kv_path))
-
+    self._memory.clear()
     self._inject_personality_into_system_prompt()
+
+    # Inicializar ChromaDB semántico (opcional, por personaje)
+    enable_semantic = semantic_memory or self._config.semantic_memory_enabled
+    if char_dir and enable_semantic:
+        try:
+            from ..db.chroma_store import ChromaStore, HAS_CHROMA
+            if HAS_CHROMA:
+                self._semantic_chroma = ChromaStore(
+                    char_dir / "memory" / "semantic",
+                    "conversation_chunks",
+                    log_fn=lambda m: self._log_debug("SEMANTIC", m),
+                )
+                self._semantic_chroma.initialize()
+            else:
+                self._semantic_chroma = None
+        except Exception:
+            self._semantic_chroma = None
+    else:
+        self._semantic_chroma = None
+
+    # Reconstruir contexto desde SQLite
+    if self._context_builder and self._chat_store:
+        token_budget = self._config.n_ctx - self._config.context_reserve_tokens
+        self._memory.load_context(token_budget)
+        self._log_debug("CHAT", f"Contexto reconstruido desde SQLite (budget={token_budget})")
 
     if self._character_manager._soul_accessor and self._character_manager._soul_accessor.is_active:
         self._log_info(f"Soul System activo para '{name}'. Personalidad potenciada por vida simulada.")
+
+    return result
 
 VToolLlama.load_character = load_character
 
@@ -237,42 +296,46 @@ def _warmup_character_cache(self: VToolLlama, prompt: Optional[str] = None) -> N
 
     base_kv_path = char_dir / "memory" / "base.state"
     base_soul_kv_path = char_dir / "memory" / "base_soul.state"
-    full_kv_path = char_dir / "memory" / "personality_plus_memory.state"
 
     soul = getattr(self._character_manager, '_soul_accessor', None)
     soul_active = soul is not None and soul.is_active
 
+    # 1. Base state (DNA) — se genera una vez
     base_prompt = self._character_manager.build_base_system_prompt(self._config.system_prompt, self._config)
     if not base_kv_path.exists():
         self._log_debug("STATE", "Generando KV Cache Base (DNA)...")
         self._model_manager.warmup_system_prompt(base_prompt)
         self._model_manager.save_kv_state(str(base_kv_path))
-        base_yaml_path = char_dir / "memory" / "base_promt.yaml"
-        lines = base_prompt.split('\n')
-        yaml_lines = ["prompt: |"]
-        for line in lines:
-            yaml_lines.append(f"  {line}")
-        base_yaml_path.write_text('\n'.join(yaml_lines) + '\n', encoding='utf-8')
 
-    if soul_active:
-        if not base_soul_kv_path.exists():
-            self._log_debug("STATE", "Generando KV Cache Base Soul (DNA + Soul)...")
-            base_soul_prompt = self._character_manager.compile_base_soul_prompt(self._config.system_prompt, self._config)
-            self._model_manager.warmup_system_prompt(base_soul_prompt)
-            self._model_manager.save_kv_state(str(base_soul_kv_path))
+    # 2. Base Soul state (DNA + Soul) — se genera una vez si hay alma
+    if soul_active and not base_soul_kv_path.exists():
+        self._log_debug("STATE", "Generando KV Cache Base Soul (DNA + Soul)...")
+        base_soul_prompt = self._character_manager.compile_base_soul_prompt(self._config.system_prompt, self._config)
+        self._model_manager.warmup_system_prompt(base_soul_prompt)
+        self._model_manager.save_kv_state(str(base_soul_kv_path))
 
+    # 3. Cargar el base que corresponda
     if soul_active and base_soul_kv_path.exists():
         self._model_manager.load_kv_state(str(base_soul_kv_path))
     else:
         self._model_manager.load_kv_state(str(base_kv_path))
 
+    # 4. Warmup diferencial con el prompt completo (no se persiste)
     if prompt is None:
         prompt = self._character_manager.build_system_prompt(self._config.system_prompt, self._config)
 
-    self._log_debug("STATE", "Añadiendo Memoria al KV Cache Base...")
+    self._log_debug("STATE", "Warmup diferencial del prompt completo sobre Base...")
     self._model_manager.warmup_system_prompt(prompt)
-    self._model_manager.save_kv_state(str(full_kv_path))
     self._character_manager.mark_rebuild_done(prompt)
+
+    # Guardar prompt compilado como YAML (debug)
+    if char_dir:
+        yaml_path = char_dir / "memory" / "base_prompt.yaml"
+        lines = prompt.split('\n')
+        yaml_lines = ["prompt: |"]
+        for line in lines:
+            yaml_lines.append(f"  {line}")
+        yaml_path.write_text('\n'.join(yaml_lines) + '\n', encoding='utf-8')
 
 VToolLlama._warmup_character_cache = _warmup_character_cache
 

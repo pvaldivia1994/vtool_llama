@@ -124,7 +124,7 @@ def main():
             rules_data=rules_data,
             initial_memories=memories
         )
-        print(f"\n¡Éxito! El personaje '{char_name}' ha sido creado en la carpeta 'personajes/{name}'.")
+        print(f"\n¡Éxito! El personaje '{char_name}' ha sido creado en la carpeta 'characters/{name}'.")
         print(f"Para interactuar con él, usa: llm.load_character('{name}')")
         
     except Exception as e:

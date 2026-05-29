@@ -52,11 +52,12 @@ Barrel. Importa y re-exporta los 24 tipos desde los 3 submódulos. No define nad
 | `RelationshipState` | `trust_level`, `familiarity`, `affective_memory`, `dynamics` | `state/relationship_state.json` |
 | `PersonalityState` | `base_personality`, `emotional_signature`, `user_model`, `behavior_summary` | `state/personality_state.json` |
 
-**Mods:**
+**Mods & Load Result:**
 
 | Tipo | Campos | Persiste en |
 |------|--------|-------------|
 | `CharacterMod` | `id`, `target_layer`, `override_value`, `intensity` | `mods/active_mods.json` |
+| `CharacterLoadResult` | `success`, `character_name`, `soul_active`, `psychology_active`, `logs`, `error` | No persiste — retorno de `load_character()` |
 
 ### `psychology.py` — Tipos de Psicología y Soul
 

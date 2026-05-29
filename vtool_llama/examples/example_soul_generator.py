@@ -187,10 +187,13 @@ def select_character(llm):
         print("No hay personajes disponibles. Crea uno primero con example_ai_builder.py")
         return None
 
+    names = [c["name"] for c in chars]
+
     print("\nPersonajes disponibles:")
-    for i, name in enumerate(chars, 1):
-        soul = " [ALMA]" if llm.has_character_soul(name) else ""
-        print(f"  {i}. {name}{soul}")
+    for i, c in enumerate(chars, 1):
+        soul = " [ALMA]" if c["has_soul"] else ""
+        desc = f" — {c['role']}" if c['role'] else ""
+        print(f"  {i}. {c['name']}{desc}{soul}")
 
     while True:
         try:
@@ -200,8 +203,8 @@ def select_character(llm):
             if sel.isdigit():
                 idx = int(sel) - 1
                 if 0 <= idx < len(chars):
-                    return chars[idx]
-            elif sel in chars:
+                    return chars[idx]["name"]
+            elif sel in names:
                 return sel
             print(f"Opción inválida. Elige 1-{len(chars)} o un nombre.")
         except (ValueError, IndexError):

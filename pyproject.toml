@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vtool_llama"
+version = "0.3.0"
+description = "Librería profesional de IA conversacional local para Windows"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+keywords = ["llama", "gguf", "llm", "ai", "conversational", "windows", "cuda"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: Microsoft :: Windows",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "llama-cpp-python>=0.2.0,<0.4.0",
+    "pydantic>=2.0.0",
+    "orjson>=3.9.0",
+    "colorama>=0.4.6",
+    "chromadb>=0.4.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/pvaldivia1994/vtool_llama"
+Repository = "https://github.com/pvaldivia1994/vtool_llama.git"
+
+[tool.setuptools.packages.find]
+include = ["vtool_llama", "vtool_llama.*"]
+
+[tool.setuptools.package-data]
+vtool_llama = ["config/*.json", "characters/**/*.json"]
