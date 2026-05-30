@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from ..types import PromptSection
 
@@ -82,9 +82,10 @@ class SemanticRetrievalStrategy(RetrievalStrategy):
     """Retrieval semántico desde ChromaDB (conversation chunks manuales).
     Solo activo si hay chroma_store configurado."""
 
-    def __init__(self, chroma_store=None, priority: int = 20):
+    def __init__(self, chroma_store=None, min_similarity: float = 0.3, priority: int = 20):
         super().__init__(priority=priority)
         self._chroma_store = chroma_store
+        self._min_similarity = min_similarity
 
     def retrieve(
         self,
@@ -98,9 +99,13 @@ class SemanticRetrievalStrategy(RetrievalStrategy):
         if not self._chroma_store or not self._chroma_store.is_available:
             return PromptSection(type="semantic", priority=self.priority, tokens=0, messages=[])
 
-        # Obtener el último mensaje como query
-        path = store.get_active_branch_messages(conversation_id, branch_id, leaf_message_id, limit=1)
-        query = path[-1].content if path else ""
+        # Obtener los últimos 3 mensajes como contexto para la query semántica
+        path = store.get_active_branch_messages(conversation_id, branch_id, leaf_message_id, limit=3)
+        query_parts = [m.content for m in path if m.content]
+        query = " ".join(query_parts) if query_parts else ""
+
+        if not query:
+            return PromptSection(type="semantic", priority=self.priority, tokens=0, messages=[])
 
         results = self._chroma_store.search(query, top_k=3)
         if not results:
@@ -110,6 +115,9 @@ class SemanticRetrievalStrategy(RetrievalStrategy):
         running = 0
 
         for r in results:
+            # Filtrar por similaridad mínima para evitar falsos positivos irrelevantes
+            if r.get("similarity", 0.0) < self._min_similarity:
+                continue
             doc = r.get("document", "")
             if not doc:
                 continue

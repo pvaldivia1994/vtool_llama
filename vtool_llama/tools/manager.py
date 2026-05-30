@@ -13,12 +13,10 @@ from __future__ import annotations
 import json
 from typing import Any, Callable, Optional
 
-from .definitions import INTERNAL_TOOLS
 from .parser import (
     parse_text_tool_calls,
     strip_text_tool_calls,
     execute_text_tool,
-    is_internal_tool,
 )
 
 # ============================================================

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
 
 from .compiler import CharacterCompiler
 
@@ -289,18 +288,6 @@ def _resolve_never_do(self: CharacterCompiler) -> str:
         return ""
     return "[HARD RULES — Character Restrictions]\nNever:\n" + "\n".join(f"- {r}" for r in rules.never_do)
 
-CharacterCompiler._resolve_core_rules = _resolve_core_rules
-
-
-def _resolve_never_do(self: CharacterCompiler) -> str:
-    rules = self.manager.rules
-    if not rules.never_do:
-        return ""
-    parts = ["[HARD RULES — Character Restrictions]", "Never:"]
-    for r in rules.never_do:
-        parts.append(f"- {r}")
-    return "\n".join(parts)
-
 CharacterCompiler._resolve_never_do = _resolve_never_do
 
 
@@ -464,25 +451,7 @@ CharacterCompiler._resolve_memory = _resolve_memory
 
 
 def _resolve_episode(self: CharacterCompiler) -> str:
-    ep = self.manager.current_episode
-    if not ep or (not ep.summary and not ep.messages):
-        return ""
-
-    parts = [f"[MEMORIA EPISÓDICA — Última Sesión (#{ep.episode_id})]"]
-
-    if ep.summary:
-        parts.append(f"Resumen: {ep.summary}")
-
-    if ep.messages:
-        parts.append("\nÚltimos mensajes:")
-        for msg in ep.messages[-5:]:
-            role = msg.get("role", "?")
-            content = msg.get("content", "")
-            if content:
-                label = "Usuario" if role == "user" else self.manager.identity.name or "Asistente"
-                parts.append(f"  {label}: {content[:200]}")
-
-    return "\n".join(parts)
+    return ""
 
 CharacterCompiler._resolve_episode = _resolve_episode
 

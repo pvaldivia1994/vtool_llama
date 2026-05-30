@@ -1,6 +1,5 @@
 import sys
 import os
-import json
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
@@ -152,12 +151,12 @@ def main():
     print(f"  Estilo: {dna['speech'].get('style', 'sin definir')}")
 
     if input(f"\n¿Iniciar chat con {name}? (s/n): ").strip().lower() in ('s', 'y'):
-        llm.load_character(name)
+        llm.load_character(name, semantic_memory=True)
         print(f"\n--- {name} ---")
         print("Comandos: /help /rebuild /autosave N /clean")
         while True:
             try:
-                user_input = input(f"\nTú: ").strip()
+                user_input = input("\nTú: ").strip()
                 if not user_input:
                     continue
                 if user_input.lower() in ["salir", "exit", "quit"]:

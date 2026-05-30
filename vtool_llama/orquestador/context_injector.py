@@ -7,8 +7,8 @@ El ContextBuilder las recolecta y las inyecta como system messages.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Optional
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..db import ChatStore

@@ -83,6 +83,7 @@ Gestiona el estado del KV Cache para warmup de personajes (arquitectura de cach�
 | `get_model_info()` | Metadata del modelo + hardware GPU (nvidia-smi + torch fallback) |
 | `supports_tools()` | Detecta tool calling nativo analizando `tokenizer.chat_template` en metadata GGUF |
 | `count_tokens(text)` | Tokens exactos vía tokenizer del modelo, o estimación si no hay modelo |
+| `count_messages_tokens(messages)` | Conteo preciso de tokens formateando el historial completo a través de la plantilla de chat del modelo (con sumatoria y overhead como fallback) |
 
 ## Thread Safety
 

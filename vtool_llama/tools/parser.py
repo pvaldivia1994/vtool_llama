@@ -93,7 +93,7 @@ def execute_text_tool(
             priority = max(0.0, min(priority, 1.0))
 
             if not content:
-                log(f"[ToolParser] store_long_term_memory rechazada: content vacio")
+                log("[ToolParser] store_long_term_memory rechazada: content vacio")
                 return None
 
             result = add_memory_fn(

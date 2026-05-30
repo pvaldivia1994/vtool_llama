@@ -8,7 +8,6 @@ Proporciona endpoints para:
 - Información del personaje
 """
 
-import os
 import sys
 import json
 import traceback
@@ -17,9 +16,8 @@ from typing import AsyncGenerator
 from pathlib import Path
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -30,7 +28,7 @@ if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 # Importar vtool_llama
-from vtool_llama import VToolLlama
+from vtool_llama import VToolLlama  # noqa: E402
 
 # ============================================================================
 # CONFIGURACIÓN
@@ -184,7 +182,7 @@ async def load_character(req: LoadCharacterRequest):
             )
 
         # Cargar el personaje
-        llm.load_character(character)
+        llm.load_character(character, semantic_memory=True)
         _current_character = character
 
         # Obtener estado

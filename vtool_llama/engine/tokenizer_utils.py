@@ -15,7 +15,7 @@ tokenizer del modelo cuando está disponible.
 from __future__ import annotations
 
 import math
-from typing import Callable, Optional
+from typing import Callable
 
 
 # Factor de conversión aproximado: 1 token ≈ 4 caracteres para
@@ -94,11 +94,14 @@ def is_context_near_limit(
     """
     Determina si el contexto está peligrosamente cerca del límite.
 
+    Compara current_tokens contra effective_limit (max_tokens - reserve_tokens)
+    usando threshold_percent como umbral.
+
     Args:
         current_tokens: tokens actuales
         max_tokens: n_ctx configurado
         reserve_tokens: tokens a reservar para la respuesta
-        threshold_percent: porcentaje para considerar "cerca"
+        threshold_percent: porcentaje del effective_limit para considerar "cerca"
 
     Returns:
         True si hay que hacer trim pronto
@@ -107,7 +110,7 @@ def is_context_near_limit(
     if effective_limit <= 0:
         return True
 
-    usage = context_usage_percent(current_tokens, max_tokens)
+    usage = context_usage_percent(current_tokens, effective_limit)
     return usage >= threshold_percent
 
 

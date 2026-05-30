@@ -25,7 +25,6 @@ from ..types import (
     SpeechDNA,
     RulesDNA,
     MemoryEntry,
-    EpisodeSnapshot,
     RuntimeState,
     RelationshipState,
     PersonalityState,
@@ -66,7 +65,6 @@ class CharacterManager:
         self.relationship_state: RelationshipState = RelationshipState()
 
         self.active_mods: dict[str, CharacterMod] = {}
-        self.current_episode: Optional[EpisodeSnapshot] = None
         self._cached_prompt_hash: str = ""
         self._prompt_dirty: bool = True
         self._compiled_prompt_cache: str = ""
@@ -157,9 +155,6 @@ class CharacterManager:
 
                 self._check_cancel()
                 self._load_memory()
-
-                self._check_cancel()
-                self._load_latest_episode()
 
                 self._check_cancel()
                 self._load_state()
@@ -260,9 +255,12 @@ class CharacterManager:
         if not self._prompt_dirty and self._compiled_prompt_cache:
             return self._compiled_prompt_cache
 
-        self._compiled_prompt_cache = self._compiler.compile_prompt(base_system_prompt, config)
+        self._compiled_prompt_cache = self._compiler.compile_static_prompt(base_system_prompt, config)
         self._prompt_dirty = False
         return self._compiled_prompt_cache
+
+    def build_dynamic_prompt(self) -> str:
+        return self._compiler.compile_dynamic_prompt()
 
     def mark_prompt_dirty(self) -> None:
         self._prompt_dirty = True
@@ -300,6 +298,7 @@ class CharacterManager:
         return valid
 
     def _write_json(self, path: Path, data: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = path.with_suffix(".tmp")
         try:
             with open(temp_path, "w", encoding="utf-8") as f:

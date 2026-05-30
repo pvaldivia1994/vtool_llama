@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
+from ..types import ConfigSchema
+
 if TYPE_CHECKING:
     from ..character.base import CharacterManager
 
@@ -40,14 +42,19 @@ Never:
 - Suddenly become emotionally neutral
 - Behave like generic ChatGPT"""
 
-from ..types import ConfigSchema
-
 
 class CharacterCompiler:
     def __init__(self, manager: CharacterManager):
         self.manager = manager
 
     def compile_prompt(self, base_system_prompt: str, config: Optional[ConfigSchema] = None) -> str:
+        static = self.compile_static_prompt(base_system_prompt, config)
+        dynamic = self.compile_dynamic_prompt()
+        if dynamic:
+            return f"{static}\n\n{dynamic}"
+        return static
+
+    def compile_static_prompt(self, base_system_prompt: str, config: Optional[ConfigSchema] = None) -> str:
         if not self.manager.is_loaded:
             return base_system_prompt
 
@@ -80,12 +87,6 @@ class CharacterCompiler:
         self._try_add(parts, self._resolve_speech())
         self._try_add(parts, self._resolve_speech_patterns())
 
-        # 15. [RELATIONSHIP]
-        self._try_add(parts, self._resolve_relationship())
-
-        # 16. [EMOTIONAL STATE]
-        self._try_add(parts, self._resolve_state())
-
         # 17. [WORLD]
         self._try_add(parts, self._resolve_scenario())
 
@@ -107,12 +108,27 @@ class CharacterCompiler:
         # 23. [FEW SHOT EXAMPLES]
         self._try_add(parts, self._resolve_few_shot_examples())
 
-        # Capas dinámicas (sin orden fijo)
+        # Capas estáticas de Soul
         self._try_add(parts, self._resolve_soul())
         self._try_add(parts, self._resolve_beliefs_contradictions())
+
+        return "\n".join(parts)
+
+    def compile_dynamic_prompt(self) -> str:
+        if not self.manager.is_loaded:
+            return ""
+
+        parts = []
+
+        # 15. [RELATIONSHIP]
+        self._try_add(parts, self._resolve_relationship())
+
+        # 16. [EMOTIONAL STATE]
+        self._try_add(parts, self._resolve_state())
+
+        # Capas dinámicas
         self._try_add(parts, self._resolve_active_mods_description())
         self._try_add(parts, self._resolve_memory())
-        self._try_add(parts, self._resolve_episode())
         self._try_add(parts, self._resolve_psychology())
         self._try_add(parts, self._resolve_persona())
 

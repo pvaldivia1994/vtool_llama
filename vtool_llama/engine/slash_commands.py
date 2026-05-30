@@ -98,6 +98,10 @@ def _register_default_slash_commands(self: VToolLlama) -> None:
         "Genera un resumen de toda la conversación y lo guarda como episodio.",
     )
     self._slash_commands.register(
+        "episode", self._cmd_episode,
+        "Muestra el último resumen guardado.",
+    )
+    self._slash_commands.register(
         "context", self._cmd_context,
         "Gestiona el contexto inyectable del personaje.",
         sub={
@@ -462,9 +466,6 @@ VToolLlama._cmd_clean = _cmd_clean
 def _cmd_config(self: VToolLlama, args: str) -> str:
     import json
     from dataclasses import asdict
-
-    base = asdict(self._config_manager.get())
-
     if self._character_manager.is_loaded and self._character_manager._char_dir:
         char_config_path = self._character_manager._char_dir / "config.json"
         if char_config_path.exists():
@@ -686,7 +687,6 @@ def _cmd_resume(self: VToolLlama, args: str) -> str:
 
         # Guardar como episodio en SQLite
         last_id = history[-1]["id"] if history else 0
-        conv = self._chat_store.get_conversation(self._memory._conversation_id)
         self._chat_store.add_summary(
             conversation_id=self._memory._conversation_id,
             branch_id=self._memory._branch_id,
@@ -702,3 +702,21 @@ def _cmd_resume(self: VToolLlama, args: str) -> str:
         return f"Error generando resumen: {e}"
 
 VToolLlama._cmd_resume = _cmd_resume
+
+
+def _cmd_episode(self: VToolLlama, args: str) -> str:
+    """Muestra el último resumen guardado (episodio manual, trim, resume)."""
+    if not self._chat_store or not self._memory._conversation_id:
+        return "No hay personaje cargado."
+    summaries = self._chat_store.get_summaries(
+        self._memory._conversation_id, self._memory._branch_id, limit=5
+    )
+    if not summaries:
+        return "No hay resúmenes guardados."
+    latest = summaries[0]
+    lines = [f"📌 Último resumen (#{latest.id}, reason={latest.reason}):"]
+    if latest.summary:
+        lines.append(f"  {latest.summary[:300]}")
+    return "\n".join(lines)
+
+VToolLlama._cmd_episode = _cmd_episode

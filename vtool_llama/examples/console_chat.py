@@ -172,10 +172,10 @@ def main():
                 tools_support = info.get('supports_tools', False)
                 if tools_support:
                     print("\n--- CAPACIDADES DEL MODELO ---")
-                    print(f"Tool Calling Nativo: \033[32mSÍ\033[0m (usa tools= en chat())")
+                    print("Tool Calling Nativo: \033[32mSÍ\033[0m (usa tools= en chat())")
                 else:
                     print("\n--- CAPACIDADES DEL MODELO ---")
-                    print(f"Tool Calling Nativo: \033[33mNO\033[0m (usa el fallback {{tool_name{{...}})")
+                    print("Tool Calling Nativo: \033[33mNO\033[0m (usa el fallback {tool_name{...})")
 
                 disponibles = llm.list_available_models()
                 if disponibles:
@@ -197,7 +197,7 @@ def main():
                 nuevo_prompt = user_input[8:].strip()
                 if nuevo_prompt:
                     llm.set_system_prompt(nuevo_prompt)
-                    print(f"\033[33m[System prompt actualizado]\033[0m")
+                    print("\033[33m[System prompt actualizado]\033[0m")
                 else:
                     print("\033[33mUso: /prompt <nuevo system prompt>\033[0m")
 
@@ -223,7 +223,7 @@ def main():
 
         # Enviar mensaje al modelo
         try:
-            print(f"\033[32mAsistente:\033[0m ", end="", flush=True)
+            print("\033[32mAsistente:\033[0m ", end="", flush=True)
 
             if use_stream:
                 current_mode = None

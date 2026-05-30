@@ -9,11 +9,9 @@ Maneja:
 - Manejo de errores comunes
 """
 
-import os
 import sys
 import subprocess
 from pathlib import Path
-from typing import Optional
 
 # Asegurar que el directorio raíz del proyecto esté en sys.path
 # run.py está en vtool_llama/examples/simple_chat/, subimos 4 niveles hasta la raíz del repo
@@ -48,7 +46,7 @@ def check_dependencies():
         print(f"\n⚠️  Falta instalar: {', '.join(missing)}")
         print("\nEjecuta:")
         print("  pip install -r requirements.txt")
-        print(f"  pip install vtool_llama  # o desde tu directorio local")
+        print("  pip install vtool_llama  # o desde tu directorio local")
         sys.exit(1)
 
 
@@ -58,7 +56,7 @@ def check_characters_dir():
     characters_dir = base_dir.parent.parent / "characters"
 
     if not characters_dir.exists():
-        print(f"⚠️  Advertencia: Directorio de personajes no encontrado")
+        print("⚠️  Advertencia: Directorio de personajes no encontrado")
         print(f"   Esperado: {characters_dir}")
         response = input("\n¿Quieres especificar otra ruta? (s/n): ").strip().lower()
         if response == 's':
@@ -76,7 +74,7 @@ def check_characters_dir():
         if chars:
             print(f"✓ Directorio de personajes encontrado ({len(chars)} personajes)")
         else:
-            print(f"⚠️  Directorio de personajes existe pero está vacío")
+            print("⚠️  Directorio de personajes existe pero está vacío")
         return characters_dir
 
 
@@ -152,7 +150,7 @@ def main():
     # Verificar puerto
     if not check_port_available(port):
         print(f"❌ Error: Puerto {port} ya está en uso")
-        print(f"Intenta con otro puerto o mata el proceso que lo usa:")
+        print("Intenta con otro puerto o mata el proceso que lo usa:")
         if sys.platform == "win32":
             print(f"  netstat -ano | findstr {port}")
         else:
@@ -160,7 +158,7 @@ def main():
         sys.exit(1)
 
     # Mostrar resumen
-    print(f"\n=== Configuración Final ===")
+    print("\n=== Configuración Final ===")
     print(f"Host: {host}")
     print(f"Puerto: {port}")
     print(f"Personajes: {characters_dir}")
@@ -169,8 +167,8 @@ def main():
     url = f"http://{host if host != '0.0.0.0' else 'localhost'}:{port}"
     print(f"\n🌐 Acceso: {url}")
 
-    print(f"\n▶️  Iniciando servidor...")
-    print(f"Presiona Ctrl+C para detener\n")
+    print("\n▶️  Iniciando servidor...")
+    print("Presiona Ctrl+C para detener\n")
 
     try:
         subprocess.run([

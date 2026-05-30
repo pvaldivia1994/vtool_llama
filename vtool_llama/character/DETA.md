@@ -43,7 +43,8 @@ Define `CharacterManager`, el orquestador central. Responsabilidades:
 | `__init__()` | Inicializa todas las capas (DNA, memoria, estado, mods, compilador, ChromaDB). Acepta `base_dir` opcional para ruta de personajes |
 | `load_character(name) → CharacterLoadResult` | Carga un personaje completo desde disco. Retorna resultado con logs, estados y éxito |
 | `create_character(...)` | Crea estructura de directorios + archivos iniciales |
-| `build_system_prompt(...)` | Delega en `CharacterCompiler` para ensamblar el prompt final |
+| `build_system_prompt(...)` | Delega en `CharacterCompiler` para ensamblar el prompt del sistema estático y lo cachea |
+| `build_dynamic_prompt()` | Delega en `CharacterCompiler` para ensamblar el bloque de estados dinámicos mutables |
 | `build_base_system_prompt(...)` | Prompt base para KV Cache (solo DNA) |
 | `compile_base_soul_prompt(...)` | Prompt base + Soul System |
 | `get_relevant_memories()` | Memorias ordenadas por prioridad |

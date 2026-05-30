@@ -57,7 +57,8 @@ def main():
     examples = []
     while True:
         u_msg = input("User: ").strip()
-        if not u_msg: break
+        if not u_msg:
+            break
         c_msg = input("Char: ").strip()
         examples.append(f"{{{{user}}}}: {u_msg}\n{{{{char}}}}: {c_msg}")
     

@@ -92,7 +92,7 @@ Actúa como capa semántica opcional. Ya NO guarda turnos de chat (eso lo hace C
 |---------|-----|
 | `ensure_dir(path)` | Crea directorio recursivamente |
 | `read_json_dict(path)` | Lee JSON como dict |
-| `write_json(path, data, atomic=True)` | Escritura atómica (`.tmp` + `os.replace`) |
+| `write_json(path, data, atomic=True)` | Escritura atómica (`.tmp` + `os.replace`), asegurando la creación del directorio padre si no existe |
 
 ## Dependencias
 

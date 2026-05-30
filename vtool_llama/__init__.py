@@ -88,6 +88,7 @@ __all__ = [
     # Sistema de agente
     "CharacterManager",
     "SlashCommandRegistry",
+    "ChatStore",
     # Soul System
     "SoulGenerator",
     "RuntimeSoulAccessor",

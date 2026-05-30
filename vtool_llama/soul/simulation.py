@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from .soul_generator import SoulGenerator, _SoulState, LIFE_STAGES
+from .soul_generator import SoulGenerator, LIFE_STAGES
 
 
 def _simulate_life(
@@ -23,7 +23,6 @@ def _simulate_life(
     events_generated = 0
     last_checkpoint_month = 0
 
-    identity = self._cm.identity
     personality = self._cm.personality_dna
     traits_str = ", ".join(personality.traits)
     flaws_str = ", ".join(personality.flaws)
@@ -90,9 +89,9 @@ def _simulate_life(
             event_id = f"life_{month}_{uuid.uuid4().hex[:8]}"
 
             if self._chroma:
-                self._chroma.add_event(
-                    event_id=event_id,
-                    description=event.get("description", ""),
+                self._chroma.add_document(
+                    doc_id=event_id,
+                    document=event.get("description", ""),
                     metadata=event_meta,
                 )
 
@@ -154,14 +153,15 @@ def _simulate_life(
                     "event_type": micro.get("type", "social"),
                     "emotional_weight": 0.2,
                 }
+                event_id = f"micro_{month}_{uuid.uuid4().hex[:8]}"
                 if self._chroma:
-                    self._chroma.add_event(
-                        event_id=f"micro_{month}_{uuid.uuid4().hex[:8]}",
-                        description=micro.get("description", ""),
+                    self._chroma.add_document(
+                        doc_id=event_id,
+                        document=micro.get("description", ""),
                         metadata=micro_meta,
                     )
                 events_generated += 1
-                self._add_event_to_history(f"micro_{month}_{uuid.uuid4().hex[:8]}", month, micro, {})
+                self._add_event_to_history(event_id, month, micro, {})
 
         if month % 12 == 11 and getattr(self, '_interactive_mode', False) and getattr(self, '_interactive_callback', None):
             year_start_month = year * 12
@@ -208,7 +208,7 @@ def _simulate_life(
                 }
                 event_id = f"injected_{month}_{uuid.uuid4().hex[:8]}"
                 if self._chroma:
-                    self._chroma.add_event(event_id=event_id, description=inj_event.get("description", ""), metadata=event_meta)
+                    self._chroma.add_document(doc_id=event_id, document=inj_event.get("description", ""), metadata=event_meta)
                 events_generated += 1
                 self._add_event_to_history(event_id, month, inj_event, psy_impact)
 
@@ -250,11 +250,11 @@ def _generate_micro_event(self: SoulGenerator, month: int) -> Optional[dict]:
 
     descriptions = [
         f"Spent a quiet afternoon reflecting on life (age {month//12})",
-        f"Had an unexpected conversation with a stranger that made me think",
-        f"Discovered a new interest while browsing",
-        f"Felt a sudden wave of nostalgia thinking about the past",
-        f"Witnessed something beautiful that lifted the mood",
-        f"A small disagreement reminded me of past conflicts",
+        "Had an unexpected conversation with a stranger that made me think",
+        "Discovered a new interest while browsing",
+        "Felt a sudden wave of nostalgia thinking about the past",
+        "Witnessed something beautiful that lifted the mood",
+        "A small disagreement reminded me of past conflicts",
     ]
 
     return {

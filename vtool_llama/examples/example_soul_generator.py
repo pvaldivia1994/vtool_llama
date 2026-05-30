@@ -6,7 +6,7 @@ import msvcrt
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from vtool_llama import VToolLlama, Genome, PsychologyState, PersonaState
+from vtool_llama import VToolLlama
 
 def timed_input(prompt, timeout=60, default="Tu elige"):
     print(prompt, end="", flush=True)
@@ -243,7 +243,7 @@ def show_psychology_profile(llm, name):
     # ── 0. CORE IDENTITY ─────────────────────────────────────
     core_id = getattr(cm, '_core_identity', None)
     if core_id:
-        print(f"\n  [CORE IDENTITY — Filtro de interpretación]")
+        print("\n  [CORE IDENTITY — Filtro de interpretación]")
         if core_id.core_fears:
             print(f"    Miedos: {', '.join(core_id.core_fears[:4])}")
         if core_id.core_desires:
@@ -254,14 +254,14 @@ def show_psychology_profile(llm, name):
         # Contradicciones internas
         conflicts = core_id.derive_contradictions()
         if conflicts:
-            print(f"    Conflictos internos:")
+            print("    Conflictos internos:")
             for c in conflicts[:3]:
                 print(f"      • {c}")
 
         # Creencias sobre sí mismo dañadas
         low_beliefs = {k: v for k, v in core_id.self_beliefs.items() if v < 0.4}
         if low_beliefs:
-            print(f"    Creencias dañadas:")
+            print("    Creencias dañadas:")
             for k, v in low_beliefs.items():
                 print(f"      {k.replace('_',' ').capitalize()}: {v:.2f}")
 
@@ -277,7 +277,7 @@ def show_psychology_profile(llm, name):
     # ── 1. GENOME ─────────────────────────────────────────────
     genome = getattr(cm, '_genome', None)
     if genome:
-        print(f"\n  [GENOME — Temperamento innato]")
+        print("\n  [GENOME — Temperamento innato]")
         high = [(k, v) for k, v in genome.__dict__.items()
                 if isinstance(v, (int, float)) and v > 0.6]
         low = [(k, v) for k, v in genome.__dict__.items()
@@ -291,7 +291,7 @@ def show_psychology_profile(llm, name):
     if psych_mgr and psych_mgr.psychology:
         ps = psych_mgr.psychology
         bf = ps.current_big_five
-        print(f"\n  [PSYCHOLOGY — Estado emergente]")
+        print("\n  [PSYCHOLOGY — Estado emergente]")
         print(f"    Big Five: O={bf.get('openness',0):.2f} C={bf.get('conscientiousness',0):.2f} "
               f"E={bf.get('extraversion',0):.2f} A={bf.get('agreeableness',0):.2f} "
               f"N={bf.get('neuroticism',0):.2f}")
@@ -309,7 +309,7 @@ def show_psychology_profile(llm, name):
     # ── 3. PERSONA ────────────────────────────────────────────
     if psych_mgr and psych_mgr.persona:
         p = psych_mgr.persona
-        print(f"\n  [PERSONA — Expresión actual]")
+        print("\n  [PERSONA — Expresión actual]")
         print(f"    Estilo: {p.speech_style} | Verborrea: {p.verbosity:.2f} | "
               f"Sarcasmo: {p.sarcasm_tendency:.2f}")
         print(f"    Calidez: {p.warmth:.2f} | Defensividad: {p.defensiveness:.2f}")
@@ -320,7 +320,7 @@ def show_psychology_profile(llm, name):
     # ── 4. EMOTION ────────────────────────────────────────────
     if psych_mgr and psych_mgr.emotional:
         em = psych_mgr.emotional
-        print(f"\n  [EMOCIÓN]")
+        print("\n  [EMOCIÓN]")
         print(f"    Estado: {em.dominant_emotion.capitalize()} "
               f"(valencia={em.valence:.2f}, activación={em.arousal:.2f})")
 
@@ -344,7 +344,7 @@ def show_psychology_profile(llm, name):
             compressed = soul_data.get("compressed", {})
             archetype = compressed.get("core_identity", {}).get("archetype", "") if isinstance(compressed, dict) else ""
             philosophy = compressed.get("life_philosophy", "") if isinstance(compressed, dict) else ""
-            print(f"\n  [ALMA]")
+            print("\n  [ALMA]")
             if archetype:
                 print(f"    Arquetipo: {archetype}")
             if philosophy:
@@ -600,9 +600,9 @@ def main():
         world_description = get_input("Descripción y leyes especiales del mundo (ej. distopía cyberpunk, magia prohibida) [Ninguna]: ", default="", auto_enabled=auto_response).strip()
 
     # Mostrar la configuración establecida
-    print(f"\n==========================================")
-    print(f"  CONFIGURACIÓN DE MUNDO ESTABLECIDA:")
-    print(f"==========================================")
+    print("\n==========================================")
+    print("  CONFIGURACIÓN DE MUNDO ESTABLECIDA:")
+    print("==========================================")
     print(f"  - Tipo de Mundo: {'MUNDO REAL' if world_type == 'real' else 'MUNDO FICTICIO/FANTASÍA'}")
     print(f"  - País/Región/Reino: {country}")
     print(f"  - Año de Nacimiento: {birth_year}")
@@ -613,7 +613,7 @@ def main():
     print(f"  - Situación Económica: {economy}")
     print(f"  - Nivel de Ingresos Familiares: {family_income}")
     print(f"  - Leyes/Descripción del Mundo: {world_description or 'Ninguna'}")
-    print(f"==========================================\n")
+    print("==========================================\n")
 
     start_age_years_str = get_input("Edad de inicio de simulación de vida (0 para nacer de nuevo, ej. 24) [0]: ", default="0", auto_enabled=auto_response).strip()
     start_age_years = int(start_age_years_str) if start_age_years_str.isdigit() else 0
@@ -626,9 +626,9 @@ def main():
     save_events_history = resp_history != 'n'
 
     # Confirmar
-    print(f"\n  El alma se genera simulando la vida MES A MES.")
-    print(f"  Con LLM real puede tomar MINUTOS O HORAS.")
-    print(f"  Guarda checkpoints, se puede reanudar.\n")
+    print("\n  El alma se genera simulando la vida MES A MES.")
+    print("  Con LLM real puede tomar MINUTOS O HORAS.")
+    print("  Guarda checkpoints, se puede reanudar.\n")
     resp = input(f"¿Generar alma para '{char_name}'? (s/N): ").strip().lower()
     if resp != 's':
         print("Cancelado.")

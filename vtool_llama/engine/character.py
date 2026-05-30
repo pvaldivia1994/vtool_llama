@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 from .base import VToolLlama
 from ..db import ChatStore
 from ..tools import TOOL_USAGE_POLICY
 from ..utils import TokenCounter
-from ..orquestador import ContextInjectionStrategy
+from ..orquestador import ContextInjectionStrategy, SceneContextStrategy
 from .context_builder import ContextBuilder
 from .retrieval import (
     RecentMessagesStrategy,
@@ -45,13 +45,37 @@ def load_character(self: VToolLlama, name: str, semantic_memory: bool = False) -
             tokenize_fn = self._model_manager.count_tokens
         self._token_counter = TokenCounter(tokenize_fn=tokenize_fn)
 
+        # Inicializar ChromaDB semántico (opcional, por personaje)
+        enable_semantic = semantic_memory or self._config.semantic_memory_enabled
+        if enable_semantic:
+            try:
+                from ..db.chroma_store import ChromaStore, HAS_CHROMA
+                if HAS_CHROMA:
+                    self._semantic_chroma = ChromaStore(
+                        char_dir / "_memory" / "semantic",
+                        "conversation_chunks",
+                        log_fn=lambda m: self._log_debug("SEMANTIC", m),
+                    )
+                    self._semantic_chroma.initialize()
+                else:
+                    self._semantic_chroma = None
+            except Exception:
+                self._semantic_chroma = None
+        else:
+            self._semantic_chroma = None
+
+        strategies = [
+            ContextInjectionStrategy(),
+            SceneContextStrategy(),
+        ]
+        if self._semantic_chroma and self._semantic_chroma.is_available:
+            strategies.append(SemanticRetrievalStrategy(chroma_store=self._semantic_chroma))
+        strategies.append(RecentMessagesStrategy())
+
         self._context_builder = ContextBuilder(
             store=self._chat_store,
             token_counter=self._token_counter,
-            strategies=[
-                ContextInjectionStrategy(),
-                RecentMessagesStrategy(),
-            ],
+            strategies=strategies,
         )
 
         conv = self._chat_store.get_or_create_conversation(name)
@@ -68,6 +92,7 @@ def load_character(self: VToolLlama, name: str, semantic_memory: bool = False) -
         self._chat_store = None
         self._context_builder = None
         self._token_counter = None
+        self._semantic_chroma = None
 
     if char_dir and self._model_manager.is_loaded:
         prompt = self._character_manager.build_system_prompt(self._config.system_prompt, self._config)
@@ -96,25 +121,6 @@ def load_character(self: VToolLlama, name: str, semantic_memory: bool = False) -
                 self._log_debug("MODEL", f"Chat template aplicado: {tpl_path}")
             except Exception as e:
                 self._log_warning(f"No se pudo aplicar chat template: {e}")
-
-    # Inicializar ChromaDB semántico (opcional, por personaje)
-    enable_semantic = semantic_memory or self._config.semantic_memory_enabled
-    if char_dir and enable_semantic:
-        try:
-            from ..db.chroma_store import ChromaStore, HAS_CHROMA
-            if HAS_CHROMA:
-                self._semantic_chroma = ChromaStore(
-                    char_dir / "_memory" / "semantic",
-                    "conversation_chunks",
-                    log_fn=lambda m: self._log_debug("SEMANTIC", m),
-                )
-                self._semantic_chroma.initialize()
-            else:
-                self._semantic_chroma = None
-        except Exception:
-            self._semantic_chroma = None
-    else:
-        self._semantic_chroma = None
 
     # Reconstruir contexto desde SQLite
     if self._context_builder and self._chat_store:
@@ -522,7 +528,6 @@ def get_character_dna(self: VToolLlama, name: Optional[str] = None) -> dict:
         }
 
     # Leer directo de disco sin cargar el personaje
-    from pathlib import Path
     base = self._character_manager._base_dir
     char_dir = base / name
     if not char_dir.exists() or not (char_dir / "dna").exists():
@@ -554,7 +559,6 @@ def get_character_prompt(self: VToolLlama, name: str) -> str:
     Si existe base_prompt.yaml del último warmup lo retorna.
     Si no, construye el prompt desde los archivos DNA en disco.
     """
-    from pathlib import Path
     base = self._character_manager._base_dir
     char_dir = base / name
     if not char_dir.exists() or not (char_dir / "dna").exists():
@@ -606,7 +610,6 @@ def update_character_dna(self: VToolLlama, dna_type: str, data: dict,
         character_name: si se pasa, escribe directo a disco sin cargar
     """
     import json
-    from pathlib import Path
 
     # Determinar directorio del personaje
     if character_name:
@@ -640,7 +643,6 @@ def update_character_dna(self: VToolLlama, dna_type: str, data: dict,
     if not character_name or (self._character_manager.is_loaded
                               and self._character_manager._char_dir == char_dir):
         from ..types import IdentityDNA, PersonalityDNA, SpeechDNA, RulesDNA
-        from dataclasses import asdict
         mapping = {
             "identity": (IdentityDNA, self._character_manager.identity),
             "personality": (PersonalityDNA, self._character_manager.personality_dna),
@@ -752,7 +754,6 @@ def get_system_layer(self: VToolLlama, layer: str, character_name: Optional[str]
         layer: "system_core", "anti_assistant", "roleplay_mode"
         character_name: nombre del personaje. Si es None, usa el cargado.
     """
-    from pathlib import Path
     base = self._character_manager._base_dir
     filename = f"{layer}.yaml" if layer.endswith(".yaml") else f"{layer}.yaml"
 
@@ -802,7 +803,6 @@ def update_system_layer(self: VToolLlama, layer: str, content: str,
         content: texto completo del prompt
         character_name: si se pasa, escribe directo a disco sin cargar
     """
-    from pathlib import Path
 
     if character_name:
         base = self._character_manager._base_dir

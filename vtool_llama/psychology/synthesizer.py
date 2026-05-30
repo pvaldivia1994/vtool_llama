@@ -121,7 +121,6 @@ class PsychologySynthesizer:
 
             if count > 0:
                 avg_valence = valence_sum / count
-                avg_arousal = arousal_sum / count
 
                 new.worldview["optimism"] = max(
                     0.05, min(0.95,
@@ -284,10 +283,6 @@ class PsychologySynthesizer:
 
         # 4. EMOTIONAL TRIGGER
         emotion_trigger = generated_emotion
-        if hasattr(self, '_emotion') and hasattr(self._emotion, 'EMOTION_MAP'):
-            coords = self._emotion.EMOTION_MAP.get(generated_emotion, (0, 0))
-        else:
-            coords = (0, 0)
 
         # 5. BELIEF CREATION
         belief_added = None

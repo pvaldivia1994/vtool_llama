@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Generator, Optional
 
 from .base import VToolLlama
-from ..exceptions import EmptyPromptError, InferenceError, ModelNotLoadedError
+from ..exceptions import InferenceError, ModelNotLoadedError
 from ..tools import (
     INTERNAL_TOOLS,
     StreamPostProcessor,
@@ -121,6 +121,26 @@ def _inject_soul_context_into_messages(
     return messages
 
 VToolLlama._inject_soul_context_into_messages = _inject_soul_context_into_messages
+
+
+def _inject_dynamic_state_into_messages(self: VToolLlama, messages: list[dict]) -> list[dict]:
+    if not self._character_manager.is_loaded:
+        return messages
+    
+    dynamic_prompt = self._character_manager.build_dynamic_prompt()
+    if not dynamic_prompt.strip():
+        return messages
+    
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].get("role") == "user":
+            messages.insert(i, {"role": "system", "content": f"[ESTADO DINÁMICO DEL PERSONAJE]\n{dynamic_prompt}"})
+            break
+    else:
+        messages.append({"role": "system", "content": f"[ESTADO DINÁMICO DEL PERSONAJE]\n{dynamic_prompt}"})
+    
+    return messages
+
+VToolLlama._inject_dynamic_state_into_messages = _inject_dynamic_state_into_messages
 
 
 def _inject_chat_memory_into_messages(
@@ -282,6 +302,7 @@ def chat(
         loop_count = 0
         MAX_LOOPS = 3
         memory_saved = False
+        skip_generation = False
 
         while loop_count < MAX_LOOPS:
             loop_count += 1
@@ -289,6 +310,7 @@ def chat(
 
             if loop_count == 1:
                 self._inject_soul_context_into_messages(messages, prompt)
+                self._inject_dynamic_state_into_messages(messages)
                 # scene context injection moved to /scene_view command
 
             if system_injection and loop_count == 1:
@@ -296,26 +318,28 @@ def chat(
                     messages[-1] = dict(messages[-1])
                     messages[-1]["content"] += system_injection
 
-            self._stats.begin_generation()
-
             try:
-                result = self._model_manager.generate(
-                    messages=messages,
-                    stream=False,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    top_p=top_p,
-                    top_k=top_k,
-                    repeat_penalty=repeat_penalty,
-                    tools=active_tools,
-                    tool_choice=tool_choice,
-                )
+                if not skip_generation:
+                    self._stats.begin_generation()
+                    result = self._model_manager.generate(
+                        messages=messages,
+                        stream=False,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        top_p=top_p,
+                        top_k=top_k,
+                        repeat_penalty=repeat_penalty,
+                        tools=active_tools,
+                        tool_choice=tool_choice,
+                    )
 
-                msg_choice = result["choices"][0]["message"]
-                response_text = msg_choice.get("content") or ""
-                tool_calls = msg_choice.get("tool_calls", None)
+                    msg_choice = result["choices"][0]["message"]
+                    response_text = msg_choice.get("content") or ""
+                    tool_calls = msg_choice.get("tool_calls", None)
 
-                self._record_stats(result)
+                    self._record_stats(result)
+                else:
+                    skip_generation = False
 
                 handled = self._tool_manager.handle_structured_calls(
                     tool_calls or [],
@@ -376,6 +400,7 @@ def chat(
                             msg_choice = coerce_choice
                             response_text = coerce_choice.get("content") or ""
                             tool_calls = coerce_tools
+                            skip_generation = True
                             continue
 
                 if memory_saved:
@@ -400,6 +425,8 @@ def chat(
                             inj.mark_delivered([e.id for e in active])
                 except Exception:
                     pass
+
+                self._auto_index_if_needed()
 
                 return response_text
 
@@ -464,6 +491,7 @@ def stream_chat(
 
             if loop_count == 1:
                 self._inject_soul_context_into_messages(messages, prompt)
+                self._inject_dynamic_state_into_messages(messages)
                 # scene context injection moved to /scene_view command
 
             if system_injection and loop_count == 1:
@@ -574,6 +602,8 @@ def stream_chat(
                             inj.mark_delivered([e.id for e in active])
                 except Exception:
                     pass
+
+                self._auto_index_if_needed()
                 return
 
             except ModelNotLoadedError:
@@ -603,7 +633,9 @@ def chat_with_thinking(
     with self._lock:
         self._memory.add_user_message(prompt)
         self._auto_trim_if_needed()
+        self._inject_personality_into_system_prompt()
         messages = self._memory.get_context_messages()
+        self._inject_dynamic_state_into_messages(messages)
         self._stats.begin_generation()
 
         try:
@@ -647,6 +679,8 @@ def chat_with_thinking(
             except Exception:
                 pass
 
+            self._auto_index_if_needed()
+
             return thinking, content
 
         except ModelNotLoadedError:
@@ -677,7 +711,9 @@ def stream_chat_with_thinking(
     with self._lock:
         self._memory.add_user_message(prompt)
         self._auto_trim_if_needed()
+        self._inject_personality_into_system_prompt()
         messages = self._memory.get_context_messages()
+        self._inject_dynamic_state_into_messages(messages)
         self._stats.begin_generation()
 
         try:
@@ -771,6 +807,8 @@ def stream_chat_with_thinking(
                         inj.mark_delivered([e.id for e in active])
             except Exception:
                 pass
+
+            self._auto_index_if_needed()
 
         except ModelNotLoadedError:
             raise

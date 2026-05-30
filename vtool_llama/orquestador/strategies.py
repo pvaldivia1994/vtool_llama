@@ -13,7 +13,6 @@ from ..types import PromptSection
 if TYPE_CHECKING:
     from ..db import ChatStore
     from ..utils import TokenCounter
-    from .context_injector import ContextInjector
 
 
 class SceneContextStrategy:

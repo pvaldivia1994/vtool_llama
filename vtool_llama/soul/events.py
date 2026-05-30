@@ -6,7 +6,7 @@ import json
 import random
 from typing import Optional
 
-from .soul_generator import SoulGenerator, _SoulState, LIFE_STAGES, EVENT_TYPES, SOUL_GENERATION_SYSTEM_PROMPT
+from .soul_generator import SoulGenerator, LIFE_STAGES, EVENT_TYPES, SOUL_GENERATION_SYSTEM_PROMPT
 
 
 def _interpret_event_with_character_mind(
@@ -173,14 +173,11 @@ def _pre_generate_stage_events(
     all_events = []
 
     identity_name = getattr(identity, "name", "unknown")
-    identity_role = getattr(identity, "role", "unknown")
     identity_background = getattr(identity, "background", "")
-    identity_scenario = getattr(identity, "scenario", "")
 
     traits_str = ", ".join(personality.traits)
     flaws_str = ", ".join(personality.flaws)
     motivations_str = ", ".join(personality.motivations)
-    speech_style = getattr(speech, "style", "")
 
     total_stages = sum(
         1 for s in LIFE_STAGES

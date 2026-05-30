@@ -15,13 +15,10 @@ Modos:
 
 from __future__ import annotations
 
-import re
-from typing import Any, Callable, Generator, Optional
+from typing import Callable, Generator, Optional
 
 from .parser import (
-    TEXT_TOOL_RE,
     parse_text_tool_calls,
-    execute_text_tool,
 )
 
 

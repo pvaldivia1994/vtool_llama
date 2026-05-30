@@ -10,9 +10,7 @@ from .soul_generator import SoulGenerator, _SoulState
 
 
 def _process_reflection(self: SoulGenerator, event: dict, state: _SoulState) -> None:
-    event_desc = event.get("description", "")
     importance = event.get("importance", 0.5)
-    ev_type = event.get("type", "")
 
     if self._has_llm and importance > 0.75:
         reflection = self._generate_reflection_with_llm(event, state)
@@ -87,8 +85,6 @@ SoulGenerator._generate_reflection_with_llm = _generate_reflection_with_llm
 
 def _generate_reflection_rule_based(self: SoulGenerator, event: dict, state: _SoulState) -> dict:
     ev_type = event.get("type", "")
-    emotion = event.get("emotion", "neutral")
-    importance = event.get("importance", 0.5)
 
     reflection_map = {
         "loss": {

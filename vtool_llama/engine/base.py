@@ -17,41 +17,26 @@ Uso esperado:
 
 from __future__ import annotations
 
-import json
-import os
-import re
 import threading
 from collections import deque
-from pathlib import Path
-from typing import Any, Callable, Generator, Optional
+from typing import Any, Optional
 
 from .chat_memory import ChatMemory
 from .config_manager import ConfigManager
 from ..db import ChatStore
 from ..exceptions import (
     ConfigError,
-    EmptyPromptError,
-    InferenceError,
-    ModelNotLoadedError,
-    VToolLlamaError,
 )
 from .logger_manager import LoggerManager
 from ..model import ModelManager
 from .slash_registry import SlashCommandRegistry
 from ..character import CharacterManager
 from .stats_manager import StatsManager
-from ..types import Branch, ChatMessage, ConfigSchema, EpisodeSnapshot, GenerationStats, ModelInfo, PersonalityState
+from ..types import Branch, ChatMessage, ConfigSchema
 from ..utils import TokenCounter
-from ..soul import SoulGenerator, RuntimeSoulAccessor
+from ..soul import SoulGenerator
 from ..tools import (
-    INTERNAL_TOOLS,
-    TOOL_USAGE_POLICY,
     ToolExecutionManager,
-    StreamPostProcessor,
-    parse_text_tool_calls,
-    strip_text_tool_calls,
-    execute_text_tool,
-    has_memory_trigger,
 )
 
 
@@ -406,6 +391,32 @@ class VToolLlama:
         if self._chat_store and self._memory._conversation_id:
             self._chat_store.mark_semantic_dirty(self._memory._conversation_id)
 
+    def _auto_index_if_needed(self) -> None:
+        """Indexa automáticamente si se superó el umbral o si está sucio."""
+        if not self._chat_store or not self._memory._conversation_id or not self._semantic_chroma or not self._semantic_chroma.is_available:
+            return
+
+        try:
+            sync = self._chat_store.get_semantic_sync(self._memory._conversation_id)
+            is_dirty = bool(sync.get("dirty", 1))
+
+            if is_dirty:
+                self._log_debug("SEMANTIC", "Auto-indexado: Rebuild necesario por dirty flag.")
+                self.index_conversation(incremental=False)
+                return
+
+            last_id = sync.get("last_synced_message_id", 0)
+            new_msgs = self._chat_store.get_messages_since(
+                self._memory._conversation_id, since_id=last_id, limit=50
+            )
+
+            # Auto-indexar si hay al menos 10 mensajes nuevos (~5 turnos)
+            if len(new_msgs) >= 10:
+                self._log_debug("SEMANTIC", f"Auto-indexado: Iniciando indexado incremental con {len(new_msgs)} mensajes nuevos.")
+                self.index_conversation(incremental=True)
+        except Exception as e:
+            self._log_warning(f"Error en auto-indexado semántico: {e}")
+
     def index_conversation(self, incremental: bool = True) -> int:
         if self._semantic_saving:
             self._log_debug("SEMANTIC", "Ya hay un indexado en curso, ignorando.")
@@ -496,20 +507,24 @@ class VToolLlama:
     # ======================================================================
 
     def _log_debug(self, tag: str, message: str) -> None:
-        if self._log_manager:
+        if hasattr(self, "_log_manager") and self._log_manager:
             self._log_manager.debug(tag, message)
 
     def _log_info(self, message: str) -> None:
-        if self._log_manager:
+        if hasattr(self, "_log_manager") and self._log_manager:
             self._log_manager.info(message)
 
     def _log_warning(self, message: str) -> None:
-        if self._log_manager:
+        if hasattr(self, "_log_manager") and self._log_manager:
             self._log_manager.warning(message)
+        else:
+            print(f"WARN: {message}")
 
     def _log_error(self, message: str) -> None:
-        if self._log_manager:
+        if hasattr(self, "_log_manager") and self._log_manager:
             self._log_manager.error(message)
+        else:
+            print(f"ERROR: {message}")
 
     # ======================================================================
     # CONTEXTO (Context Manager)

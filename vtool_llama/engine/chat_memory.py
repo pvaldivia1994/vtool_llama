@@ -18,7 +18,6 @@ Responsabilidades:
 
 from __future__ import annotations
 
-import copy
 import json
 from collections import deque
 from typing import TYPE_CHECKING, Optional
@@ -61,7 +60,7 @@ class ChatMemory:
 
         self._messages: deque[Message] = deque(
             [Message(role="system", content=system_prompt)],
-            maxlen=history_limit + 1,
+            maxlen=history_limit + 2,
         )
         self._history_limit = history_limit
 
@@ -88,7 +87,8 @@ class ChatMemory:
         self._active_leaf_id = leaf_message_id
 
     def load_context(self, token_budget: int) -> None:
-        """Reconstruye el ring buffer desde ContextBuilder."""
+        """Reconstruye el ring buffer desde ContextBuilder,
+        respetando el límite de mensajes."""
         if not self._context_builder or not self._conversation_id:
             return
         messages = self._context_builder.build_messages(
@@ -99,11 +99,32 @@ class ChatMemory:
             self._system_prompt,
         )
         self._messages.clear()
+
+        # Separar system prompt del resto
+        system_msg = None
+        history = []
         for m in messages:
             if isinstance(m, dict):
-                self._messages.append(Message(**m))
+                if m.get("role") == "system" and system_msg is None:
+                    system_msg = Message(**m)
+                else:
+                    history.append(Message(**m))
             else:
-                self._messages.append(m)
+                if m.role == "system" and system_msg is None:
+                    system_msg = m
+                else:
+                    history.append(m)
+
+        # Limitar a history_limit mensajes (los más recientes)
+        max_history = self._history_limit
+        if len(history) > max_history:
+            history = history[-max_history:]
+
+        # Reconstruir
+        self._messages.append(system_msg or Message(role="system", content=self._system_prompt))
+        for m in history:
+            self._messages.append(m)
+
         if self._messages and self._messages[0].role == "system":
             self._messages[0].content = self._system_prompt
 
@@ -153,8 +174,6 @@ class ChatMemory:
         """Reinserta el system prompt si fue descartado por el deque."""
         if not self._messages or self._messages[0].role != "system":
             self._messages.appendleft(Message(role="system", content=self._system_prompt))
-            if len(self._messages) > self._history_limit + 1:
-                self._messages.pop()
 
     def add_user_message(self, content: str) -> Optional[int]:
         """Agrega un mensaje del usuario al historial.
@@ -196,10 +215,25 @@ class ChatMemory:
             return msg_id
         return None
 
-    def add_tool_message(self, content: str, tool_call_id: str) -> None:
-        """Agrega la respuesta de una herramienta al historial."""
+    def add_tool_message(self, content: str, tool_call_id: str) -> Optional[int]:
+        """Agrega la respuesta de una herramienta al historial.
+        Si hay store vinculado, también persiste en SQLite.
+        Retorna el message_id si se persistió, None si no."""
         self._messages.append(Message(role="tool", content=content, tool_call_id=tool_call_id))
         self._ensure_system_prompt()
+        if self._store and self._conversation_id:
+            msg_id = self._store.add_message(
+                conversation_id=self._conversation_id,
+                branch_id=self._branch_id,
+                role="tool",
+                content=content,
+                tool_call_id=tool_call_id,
+                parent_id=self._active_leaf_id,
+            )
+            self._active_leaf_id = msg_id
+            self._store.set_active_leaf(self._conversation_id, self._branch_id, msg_id)
+            return msg_id
+        return None
 
     def get_context_messages(self) -> list[dict]:
         """

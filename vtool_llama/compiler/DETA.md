@@ -2,31 +2,39 @@
 
 ## Visión General
 
-El CharacterCompiler ensambla el system prompt final que recibe el LLM combinando todas las capas del personaje en orden de peso cognitivo descendente. El pipeline tiene ~27 capas y resuelve conflictos con prioridad: **MODS > STATE > DNA**.
+El CharacterCompiler ensambla el system prompt y los bloques de estado del personaje combinando todas las capas en orden de peso cognitivo descendente. Resuelve conflictos con prioridad: **MODS > STATE > DNA**.
+
+Para maximizar el reuso de **KV-Cache** en `llama.cpp`, el pipeline se divide en dos bloques:
+1. **System Prompt Estático**: Compila el ADN base inmutable, reglas, estilo y lore. Se inyecta en el primer mensaje de sistema (índice 0) y calienta el KV-Cache de manera permanente.
+2. **Estado Dinámico**: Compila el estado de relación, emociones, modificadores temporales y psicología. Se inyecta dinámicamente como un mensaje de sistema temporal antes del mensaje del usuario de cada turno.
 
 ```
-compile_prompt()
+compile_static_prompt()
   └── base_system_prompt (desde config.json)
   ├── 1. [SYSTEM CORE]              ← yaml_loader (system_core.yaml)
-  ├── 2. [ANTI-ASSISTANT]           ← yaml_loader (anti_assistant.yaml)
-  ├── 3. [IDENTITY]                 ← 1_identity.md (template)
-  ├── 4. [TRAITS]                   ← 2_traits.md (template)
-  ├── 5. [MOTIVATIONS]              ← 3_motivations.md (template)
-  ├── 6. [FLAWS]                    ← 4_flaws.md (template)
-  ├── 7. [SPEECH STYLE]             ← 5_speech.md (template)
-  ├── 8. [INNER CONFLICT]           ← 6_inner_conflict.md (template)
-  ├── 9. [EMOTIONAL TRIGGERS]       ← 7_emotional_triggers.md (template)
-  ├── 10. [SPEECH PATTERNS]         ← 8_speech_patterns.md (template)
-  ├── 11. [CORE RULES]              ← 9_core_rules.md (template)
-  ├── 12. [HARD RULES]              ← 10_never_do.md (template)
-  ├── 13. [EMOTIONAL STATE]         ← 11_state.md (template)
-  ├── 14. [RELATIONSHIP]            ← 13_relationship.md (template)
-  ├── 15. [WORLD]                   ← 15_scenario.md (template)
-  ├── 16. [RESPONSE STYLE]          ← 16_response_style.md (template)
-  ├── 17. [FEW SHOT EXAMPLES]       ← 14_few_shot.md (template)
-  ├── 18. [ROLEPLAY MODE]           ← roleplay_mode.yaml (por personaje)
-  ├── soul, beliefs, psych, persona, mods, memory, episode ← dinámicos (sin template)
-  └── 19. [SECTION REFERENCE]       ← 12_definitions.md (guía de secciones)
+  ├── 2. [SECTION REFERENCE]        ← 12_definitions.md
+  ├── 3. [ANTI-ASSISTANT]           ← yaml_loader (anti_assistant.yaml)
+  ├── 4. [IDENTITY]                 ← 1_identity.md
+  ├── 5. [TRAITS]                   ← 2_traits.md
+  ├── 6. [MOTIVATIONS]              ← 3_motivations.md
+  ├── 7. [FLAWS]                    ← 4_flaws.md
+  ├── 8. [INNER CONFLICT]           ← 6_inner_conflict.md
+  ├── 9. [EMOTIONAL TRIGGERS]       ← 7_emotional_triggers.md
+  ├── 10. [SPEECH STYLE]            ← 5_speech.md
+  ├── 11. [SPEECH PATTERNS]         ← 8_speech_patterns.md
+  ├── 12. [WORLD]                   ← 15_scenario.md
+  ├── 13. [CORE RULES]              ← 9_core_rules.md
+  ├── 14. [HARD RULES]              ← 10_never_do.md
+  ├── 15. [RESPONSE STYLE]          ← 16_response_style.md
+  ├── 16. [ROLEPLAY MODE]           ← roleplay_mode.yaml
+  ├── 17. [CONTEXT DEFINITIONS]     ← Orquestador context definitions
+  ├── 18. [FEW SHOT EXAMPLES]       ← 14_few_shot.md
+  └── Estáticos de Soul y creencias
+
+compile_dynamic_prompt()
+  ├── 1. [RELATIONSHIP]             ← 13_relationship.md
+  ├── 2. [EMOTIONAL STATE]          ← 11_state.md
+  └── Mods, memoria a largo plazo, episodios, psicología y expresión (persona)
 ```
 
 ## Archivos del Subpackage
@@ -36,20 +44,19 @@ Barrel. Exporta `CharacterCompiler`.
 
 ### `compiler.py` — Clase Base
 
-Define `CharacterCompiler` y la API pública. Contiene `_resolve_definitions()` que carga `12_definitions.md`.
+Define `CharacterCompiler` y la API pública.
 
 | Método | Rol |
 |--------|-----|
-| `compile_prompt(base, config)` | Pipeline completo de capas (DNA templates + YAML + dinámicas) |
+| `compile_prompt(base, config)` | Une el bloque estático y dinámico (para compatibilidad hacia atrás) |
+| `compile_static_prompt(base, config)` | Genera el prompt del sistema 100% estático |
+| `compile_dynamic_prompt()` | Genera el bloque de estados y mods dinámicos |
 | `_resolve_definitions()` | Carga `config/prompts/12_definitions.md` como guía de secciones |
 | `_try_add(parts, block)` | Agrega bloque si no está vacío |
 
-**Pipeline** (`compile_prompt`):
-1. YAML por personaje: `system_core.yaml`, `anti_assistant.yaml`
-2. Templates `.md` numerados desde `config/prompts/`: identity, traits, motivations, flaws, speech, etc.
-3. Capas dinámicas: soul, beliefs, psychology, persona, memory, episode, active_mods
-4. YAML por personaje: `roleplay_mode.yaml`
-5. `12_definitions.md` como guía final de secciones
+**Pipeline de Compilación**:
+- `compile_static_prompt` compila la estructura inmutable del personaje (Placeholders de DNA + Reglas + Lore + Ejemplos).
+- `compile_dynamic_prompt` compila las capas que cambian en cada turno (Emociones, Nivel de Confianza, Heridas, Mods de humor, etc.).
 
 ### `yaml_loader.py` — Carga de YAML
 

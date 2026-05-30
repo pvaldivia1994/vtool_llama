@@ -7,11 +7,9 @@ from typing import Optional
 
 from .manager import ModelManager
 from ..exceptions import (
-    CUDAUnavailableError,
     InferenceError,
     InvalidModelError,
     ModelNotFoundError,
-    ModelNotLoadedError,
     OOMError,
 )
 from ..types import ModelInfo

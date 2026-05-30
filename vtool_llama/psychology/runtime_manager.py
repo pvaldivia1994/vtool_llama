@@ -258,7 +258,7 @@ class RuntimeSoulManager:
 
         unsatisfied = [k for k, v in self._psychology.needs.items() if v < 0.35]
         if unsatisfied:
-            parts.append(f"Necesidades activas: " + ", ".join(unsatisfied))
+            parts.append("Necesidades activas: " + ", ".join(unsatisfied))
 
         if self._psychology.active_wounds:
             wounds = self._psychology.active_wounds[:3]

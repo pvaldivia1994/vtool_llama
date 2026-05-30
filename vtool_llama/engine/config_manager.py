@@ -17,7 +17,6 @@ Flujo:
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -160,7 +159,7 @@ class ConfigManager:
                 with open(char_config_path, "r", encoding="utf-8") as f:
                     overrides = json.load(f)
                 merged.update(overrides)
-            except (json.JSONDecodeError, OSError) as e:
+            except (json.JSONDecodeError, OSError):
                 # Si el JSON del personaje está mal, usar base silenciosamente
                 pass
 

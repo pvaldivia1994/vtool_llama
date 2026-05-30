@@ -101,3 +101,54 @@ def count_tokens(self: ModelManager, text: str) -> int:
     return estimate_tokens(text)
 
 ModelManager.count_tokens = count_tokens
+
+
+def count_messages_tokens(self: ModelManager, messages: list[dict]) -> int:
+    import json
+    with self._lock:
+        if self._model is None:
+            total = 0
+            for m in messages:
+                total += self.count_tokens(m.get("content") or "")
+                total += 8
+                if m.get("tool_calls"):
+                    total += self.count_tokens(json.dumps(m["tool_calls"]))
+            return total
+
+        try:
+            try:
+                from unittest.mock import NonCallableMock
+                is_mock = isinstance(self._model, NonCallableMock)
+            except ImportError:
+                is_mock = False
+
+            chat_formatter = None
+            if not is_mock:
+                chat_formatter = getattr(self._model, "chat_formatter", None)
+                if chat_formatter is None and hasattr(self._model, "_get_chat_formatter"):
+                    chat_formatter = self._model._get_chat_formatter()
+            
+            if chat_formatter is not None:
+                formatted = chat_formatter(messages=messages)
+                prompt_text = ""
+                if isinstance(formatted, str):
+                    prompt_text = formatted
+                elif hasattr(formatted, "prompt"):
+                    prompt_text = formatted.prompt
+                elif isinstance(formatted, dict) and "prompt" in formatted:
+                    prompt_text = formatted["prompt"]
+                
+                if prompt_text and not isinstance(prompt_text, NonCallableMock):
+                    return self.count_tokens(prompt_text)
+        except Exception:
+            pass
+
+        total = 0
+        for m in messages:
+            total += self.count_tokens(m.get("content") or "")
+            total += 10
+            if m.get("tool_calls"):
+                total += self.count_tokens(json.dumps(m["tool_calls"]))
+        return total
+
+ModelManager.count_messages_tokens = count_messages_tokens

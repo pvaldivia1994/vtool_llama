@@ -24,7 +24,6 @@ class DriftDetector:
         lower = response_text.lower()
 
         word_count = len(response_text.split())
-        avg_word_len = sum(len(w) for w in response_text.split()) / max(1, word_count)
 
         warmth_words = ["por favor", "gracias", "entiendo", "lamento", "siento",
                         "please", "thank", "understand", "sorry", "aprecio",

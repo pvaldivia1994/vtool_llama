@@ -205,7 +205,7 @@ class RuntimeSoulAccessor:
                 imp = 0.5
             emotion = meta.get("emotion", "neutral")
             age = meta.get("age", "?")
-            desc = r.get("description", "")
+            desc = r.get("document", r.get("description", ""))
             if desc and len(desc) > 10:
                 imp_label = "★" if imp > 0.7 else "♦" if imp > 0.5 else "•"
                 parts.append(f"{imp_label} (Edad {age}, {emotion}): {desc[:300]}")

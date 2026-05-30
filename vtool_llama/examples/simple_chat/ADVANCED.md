@@ -187,7 +187,7 @@ Dashboard para gestionar personajes:
 @app.get("/admin/characters/{name}/state")
 async def get_character_state_admin(name: str):
     llm = get_llm()
-    llm.load_character(name)
+    llm.load_character(name, semantic_memory=True)
     
     return {
         "character": name,
@@ -200,7 +200,7 @@ async def get_character_state_admin(name: str):
 @app.post("/admin/characters/{name}/rebuild")
 async def rebuild_character(name: str):
     llm = get_llm()
-    llm.load_character(name)
+    llm.load_character(name, semantic_memory=True)
     llm.rebuild_personality_state()
     return {"success": True}
 ```
@@ -314,7 +314,7 @@ async def websocket_collaborative(websocket: WebSocket, character: str):
             
             # Broadcast a todos
             llm = get_llm()
-            llm.load_character(character)
+            llm.load_character(character, semantic_memory=True)
             response = llm.chat(message)
             
             for conn in active_connections:

@@ -7,7 +7,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any
 
 
 def ensure_dir(path: Path) -> None:
@@ -34,6 +33,7 @@ def read_json(path: Path, dataclass_type: type) -> dict:
 
 
 def write_json(path: Path, data: dict, atomic: bool = True) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     if atomic:
         temp_path = path.with_suffix(".tmp")
         try:
@@ -48,6 +48,5 @@ def write_json(path: Path, data: dict, atomic: bool = True) -> None:
                     pass
             raise e
     else:
-        path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
