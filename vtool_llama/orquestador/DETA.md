@@ -57,6 +57,7 @@ ContextInjector
 | `[CONTEXT][TIME]` | Momento del día, clima, estación | `/context time ...` |
 | `[CONTEXT][WORLD]` | Eventos del entorno, ambiente | `/context world ...` |
 | `[CONTEXT][MEMORY]` | Hechos importantes, relaciones | `/context memory ...` |
+| `[CONTEXT][PLAYER]` | Acción actual del jugador (el personaje reacciona a esto) | `/context player ...` |
 | `[CONTEXT][CUSTOM]` | Contexto definido por el usuario | `/context custom ...` |
 
 ## Flujo de estado

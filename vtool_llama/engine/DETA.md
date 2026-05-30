@@ -116,12 +116,14 @@ Define `VToolLlama`, la clase principal. Constructor inicializa todos los gestor
 | `get_memory()` / `export_memory_json()` / `import_memory_json()` | Acceso y serialización |
 | `set_system_prompt(prompt)` | Cambia system prompt |
 | `trim_memory()` | Recorte manual de contexto |
-| `_auto_trim_if_needed()` | Auto-trim configurable |
+| `_auto_trim_if_needed()` | Genera resumen pre-trim (guardado como episodio `reason='trim'`) + elimina mensajes viejos hasta entrar en presupuesto. Restaura system prompt si se perdió |
 | `save_episode()` / `list_episodes()` / `load_episode()` / `delete_episode()` | Gestión de episodios |
+| `get_token_usage()` | Retorna `system_tokens`, `history_tokens`, `total_tokens`, `max_tokens`, `budget_available`, `usage_pct` |
+| `_extract_inline_context()` | Parsea `[context tipo texto]` del prompt del usuario |
 
 ### `slash_commands.py` — Handlers de Slash Commands
 
-Métodos `_cmd_*` asignados a `VToolLlama`: `mem`, `rebuild`, `state`, `memories`, `mood`, `rel`, `help`, `scene_view`, `save_episode`, `episodes`, `history`, `autosave`, `semantic`, `clean`, `config`, `context`.
+Métodos `_cmd_*` asignados a `VToolLlama`: `mem`, `rebuild`, `state`, `memories`, `mood`, `rel`, `help`, `scene_view`, `save_episode`, `episodes`, `history`, `semantic`, `clean`, `config`, `context`, `tick`, `resume`.
 
 ### `slash_registry.py` — SlashCommandRegistry
 
@@ -145,14 +147,16 @@ Métodos `_cmd_*` asignados a `VToolLlama`: `mem`, `rebuild`, `state`, `memories
 
 ### `chat_memory.py` — ChatMemory
 
-Mantiene historial en formato OpenAI con límite configurable y auto-trim.
+Ring buffer en RAM con `deque(maxlen=chat_memory_limit+1)`. Cada `append()` verifica que el system prompt no haya sido descartado via `_ensure_system_prompt()`.
 
 | Método | Rol |
 |--------|-----|
-| `add_user_message(text)` / `add_assistant_message(content, tool_calls)` / `add_tool_message(content, id)` | Agrega mensajes |
+| `add_user_message(text)` | Agrega mensaje user + sync SQLite + `_ensure_system_prompt()` |
+| `add_assistant_message(content, tool_calls)` | Agrega respuesta + sync SQLite + `_ensure_system_prompt()` |
+| `add_tool_message(content, id)` | Agrega tool call + `_ensure_system_prompt()` |
 | `get_context_messages()` | Retorna mensajes para inferencia |
-| `trim_to_token_budget(max, reserve, count_fn)` | Recorte por tokens |
-| `clear()` / `export_json()` / `import_json()` | Gestión |
+| `clear()` | Preserva system prompt, elimina el resto |
+| `_ensure_system_prompt()` | Reinserta system prompt si fue descartado por el deque |
 
 ### `config_manager.py` — ConfigManager
 

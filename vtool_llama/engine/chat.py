@@ -388,7 +388,7 @@ def chat(
                 self._short_memory.append({"role": "assistant", "content": response_text})
                 self._log_generation_stats()
 
-                self._auto_save_if_needed()
+                # auto-save eliminado
 
                 # Marcar contexto como entregado
                 try:
@@ -562,7 +562,7 @@ def stream_chat(
                     self._short_memory.append({"role": "assistant", "content": full_response})
 
                 self._log_generation_stats()
-                self._auto_save_if_needed()
+                # auto-save eliminado
 
                 # Marcar contexto como entregado
                 try:

@@ -72,10 +72,7 @@ def _register_default_slash_commands(self: VToolLlama) -> None:
         "history", self._cmd_history,
         "Muestra los últimos mensajes del chat. Uso: /history [N=10]",
     )
-    self._slash_commands.register(
-        "autosave", self._cmd_autosave,
-        "Activa auto-guardado cada N mensajes. Uso: /autosave <N> (0 = desactivar)",
-    )
+
     self._slash_commands.register(
         "semantic", self._cmd_semantic,
         "Indexa la conversación en ChromaDB.",
@@ -405,16 +402,7 @@ def _cmd_history(self: VToolLlama, args: str) -> str:
 VToolLlama._cmd_history = _cmd_history
 
 
-def _cmd_autosave(self: VToolLlama, args: str) -> str:
-    try:
-        n = int(args.strip())
-    except (ValueError, AttributeError):
-        return "Uso: /autosave <N> (cada N mensajes, 0 = desactivar)"
 
-    self.active_auto_save_at(n)
-    return f"✓ Auto-save {'activado' if n > 0 else 'desactivado'} cada {n} mensajes." if n > 0 else "✓ Auto-save desactivado."
-
-VToolLlama._cmd_autosave = _cmd_autosave
 
 
 def _cmd_semantic(self: VToolLlama, args: str) -> str:
@@ -432,7 +420,10 @@ VToolLlama._cmd_semantic = _cmd_semantic
 
 
 def _cmd_clean(self: VToolLlama, args: str) -> str:
-    # 1) Limpiar RAM
+    # 0) Reconstruir system prompt antes de limpiar
+    self._inject_personality_into_system_prompt()
+
+    # 1) Limpiar RAM (preserva el system prompt inyectado)
     self._memory.clear()
 
     # 2) Limpiar SQLite (soft-delete todos los mensajes activos)

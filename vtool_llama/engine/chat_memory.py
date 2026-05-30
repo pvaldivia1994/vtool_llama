@@ -63,6 +63,7 @@ class ChatMemory:
             [Message(role="system", content=system_prompt)],
             maxlen=history_limit + 1,
         )
+        self._history_limit = history_limit
 
     # ------------------------------------------------------------------
     # Vinculación con SQLite event store
@@ -148,11 +149,19 @@ class ChatMemory:
     # Operaciones del historial
     # ------------------------------------------------------------------
 
+    def _ensure_system_prompt(self) -> None:
+        """Reinserta el system prompt si fue descartado por el deque."""
+        if not self._messages or self._messages[0].role != "system":
+            self._messages.appendleft(Message(role="system", content=self._system_prompt))
+            if len(self._messages) > self._history_limit + 1:
+                self._messages.pop()
+
     def add_user_message(self, content: str) -> Optional[int]:
         """Agrega un mensaje del usuario al historial.
         Si hay store vinculado, también persiste en SQLite.
         Retorna el message_id si se persistió, None si no."""
         self._messages.append(Message(role="user", content=content))
+        self._ensure_system_prompt()
         if self._store and self._conversation_id:
             msg_id = self._store.add_message(
                 conversation_id=self._conversation_id,
@@ -171,6 +180,7 @@ class ChatMemory:
         Si hay store vinculado, también persiste en SQLite.
         Retorna el message_id si se persistió, None si no."""
         self._messages.append(Message(role="assistant", content=content, tool_calls=tool_calls))
+        self._ensure_system_prompt()
         if self._store and self._conversation_id:
             msg_id = self._store.add_message(
                 conversation_id=self._conversation_id,
@@ -189,6 +199,7 @@ class ChatMemory:
     def add_tool_message(self, content: str, tool_call_id: str) -> None:
         """Agrega la respuesta de una herramienta al historial."""
         self._messages.append(Message(role="tool", content=content, tool_call_id=tool_call_id))
+        self._ensure_system_prompt()
 
     def get_context_messages(self) -> list[dict]:
         """
@@ -210,8 +221,15 @@ class ChatMemory:
 
     def clear(self) -> None:
         """Limpia todo el historial excepto el system prompt."""
+        # Asegurar que el system prompt no esté vacío
+        prompt = self._system_prompt
+        if not prompt and self._messages:
+            for m in self._messages:
+                if m.role == "system" and m.content:
+                    prompt = m.content
+                    break
         self._messages.clear()
-        self._messages.append(Message(role="system", content=self._system_prompt))
+        self._messages.append(Message(role="system", content=prompt or self._system_prompt))
 
     def reset(self) -> None:
         """Alias de clear()."""

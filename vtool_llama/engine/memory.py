@@ -73,6 +73,54 @@ def _auto_trim_if_needed(self: VToolLlama) -> None:
 
     from .tokenizer_utils import is_context_near_limit
 
+    context_text = " ".join(
+        m.content for m in self._memory._messages if m.content
+    )
+    current_tokens = self._model_manager.count_tokens(context_text)
+
+    if not is_context_near_limit(
+        current_tokens=current_tokens,
+        max_tokens=self._config.n_ctx,
+        reserve_tokens=self._config.context_reserve_tokens,
+    ):
+        return
+
+    # 1. Generar resumen antes de empezar a recortar
+    try:
+        history = self.get_chat_history(limit=100, include_context=False)
+        if history and len(history) > 4:
+            lines = []
+            for msg in history:
+                if msg["role"] == "user":
+                    lines.append(f"Usuario: {msg['content'][:200]}")
+                elif msg["role"] == "assistant":
+                    name = self._character_manager.character_name or "Personaje"
+                    lines.append(f"{name}: {msg['content'][:200]}")
+            conversation = "\n".join(lines)
+
+            result = self._model_manager.generate(
+                messages=[{"role": "system", "content": "Resumí la conversación en 2-3 oraciones. Solo los hechos clave, sin opiniones."},
+                          {"role": "user", "content": f"CONVERSACIÓN:\n{conversation}"}],
+                stream=False, max_tokens=150, temperature=0.3,
+            )
+            summary = result["choices"][0]["message"].get("content", "").strip()
+            if summary and self._chat_store and self._memory._conversation_id:
+                conv = self._chat_store.get_conversation(self._memory._conversation_id)
+                if conv:
+                    last_id = history[-1]["id"] if history else 0
+                    self._chat_store.add_summary(
+                        conversation_id=conv.id,
+                        branch_id=conv.active_branch_id,
+                        start_message_id=history[0]["id"] if history else 0,
+                        end_message_id=last_id,
+                        summary=summary,
+                        reason="trim",
+                    )
+                    self._log_debug("EPISODE", "Resumen guardado antes de recortar contexto.")
+    except Exception as e:
+        self._log_debug("MEMORY", f"No se pudo generar resumen pre-trim: {e}")
+
+    # 2. Recortar hasta que entre en el presupuesto
     while len(self._memory._messages) > 2:
         context_text = " ".join(
             m.content for m in self._memory._messages if m.content
@@ -86,7 +134,6 @@ def _auto_trim_if_needed(self: VToolLlama) -> None:
         ):
             break
 
-        # Eliminar el mensaje no-system más antiguo (después del system prompt)
         for i, m in enumerate(self._memory._messages):
             if m.role != "system":
                 removed = self._memory._messages[i]
@@ -96,76 +143,15 @@ def _auto_trim_if_needed(self: VToolLlama) -> None:
         else:
             break
 
+    # 3. Asegurar que el system prompt no se haya perdido
+    if not self._memory._messages or self._memory._messages[0].role != "system" or not self._memory._messages[0].content:
+        self._log_debug("MEMORY", "System prompt perdido durante trim, restaurando...")
+        self._inject_personality_into_system_prompt()
+
 VToolLlama._auto_trim_if_needed = _auto_trim_if_needed
 
 
-def active_auto_save_at(self: VToolLlama, interval: int) -> None:
-    """Activa auto-guardado cada `interval` mensajes.
-    Guarda episodio en SQLite + chunks semánticos en ChromaDB."""
-    self._config.auto_summary_interval = max(0, interval)
-    if interval > 0:
-        self._log_info(f"Auto-save activado cada {interval} mensajes.")
-    else:
-        self._log_info("Auto-save desactivado.")
 
-VToolLlama.active_auto_save_at = active_auto_save_at
-
-
-def _auto_save_if_needed(self: VToolLlama) -> None:
-    interval = self._config.auto_summary_interval
-    if interval <= 0 or not self._chat_store or not self._memory._conversation_id:
-        return
-
-    conv = self._chat_store.get_conversation(self._memory._conversation_id)
-    if not conv:
-        return
-
-    msgs = self._chat_store.get_branch_messages(conv.id, conv.active_branch_id, limit=500)
-    if len(msgs) < interval or len(msgs) % interval != 0:
-        return
-
-    # Generar resumen
-    non_system = [m for m in self._memory.messages if m.role != "system"]
-    last_few = [{"role": m.role, "content": m.content or ""} for m in non_system[-5:]]
-    summary = self._generate_episode_summary(last_few) if last_few else "(auto)"
-    last_id = msgs[-1].id if msgs else 0
-
-    # 1) Guardar en SQLite summaries
-    self._chat_store.add_summary(
-        conversation_id=conv.id,
-        branch_id=conv.active_branch_id,
-        start_message_id=max(0, last_id - interval),
-        end_message_id=last_id,
-        summary=summary,
-        reason="auto",
-    )
-
-    # 2) Indexar en ChromaDB como chunk semántico (si está configurado)
-    if self._semantic_chroma and self._semantic_chroma.is_available:
-        import uuid
-        chunk_text = "\n".join(
-            f"{m.role}: {m.content}" for m in msgs[-interval:]
-            if hasattr(m, 'content') and m.content
-        )
-        if chunk_text.strip():
-            doc_id = uuid.uuid4().hex[:12]
-            self._semantic_chroma.add_document(
-                doc_id=doc_id,
-                document=f"[Auto-save - {conv.character_name}]\n{summary}\n\n{chunk_text}",
-                metadata={
-                    "conversation_id": conv.id,
-                    "start_id": max(0, last_id - interval),
-                    "end_id": last_id,
-                    "branch_id": conv.active_branch_id,
-                    "type": "auto_save",
-                },
-            )
-            self._log_debug("SEMANTIC", f"Chunk semántico indexado en ChromaDB ({doc_id}).")
-
-    self._log_debug("EPISODE", f"Auto-episodio guardado en msg #{last_id} ({len(msgs)} mensajes).")
-
-
-VToolLlama._auto_save_if_needed = _auto_save_if_needed
 
 
 def save_episode(self: VToolLlama) -> "EpisodeSnapshot":
