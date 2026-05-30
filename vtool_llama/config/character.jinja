@@ -1,0 +1,38 @@
+{{ bos_token }}
+
+{% if messages and messages[0].role == "system" %}
+<|turn>system
+{{ messages[0].content }}
+<turn|>
+{% set loop_messages = messages[1:] %}
+{% else %}
+{% set loop_messages = messages %}
+{% endif %}
+
+{% for message in loop_messages %}
+
+<{{ message.role|upper }}>
+{{ message.content }}
+</{{ message.role|upper }}>
+
+{% endfor %}
+
+{% if add_generation_prompt %}
+<MODEL>
+
+Rules:
+
+1. Stay in character.
+2. Never break character.
+3. Use tools when necessary.
+
+Tool format:
+
+<tool_call>
+{
+  "name": "tool_name",
+  "arguments": {}
+}
+</tool_call>
+
+{% endif %}

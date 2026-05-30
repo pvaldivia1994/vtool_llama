@@ -35,7 +35,7 @@ CharacterManager._load_dna = _load_dna
 def _load_memory(self: CharacterManager) -> None:
     if not self._char_dir:
         return
-    mem_file = self._char_dir / "memory" / "long_term.json"
+    mem_file = self._char_dir / "_memory" / "long_term.json"
     data = self._read_json_dict(mem_file)
 
     self._needs_rebuild = data.get("rebuild", True)
@@ -92,7 +92,7 @@ def save_state(self: CharacterManager) -> None:
             "rebuild": self._needs_rebuild,
             "memories": [asdict(m) for m in self.memories],
         }
-        self._write_json(self._char_dir / "memory" / "long_term.json", mem_data)
+        self._write_json(self._char_dir / "_memory" / "long_term.json", mem_data)
 
         meta_data = {"prompt_hash": self._cached_prompt_hash}
         self._write_json(self._char_dir / "state" / "state_meta.json", meta_data)

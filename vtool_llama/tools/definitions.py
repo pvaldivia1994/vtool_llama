@@ -50,33 +50,6 @@ INTERNAL_TOOLS = [
             },
         },
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_scene_state",
-            "description": (
-                "Retrieve the current environmental and emotional "
-                "scene state for immersive narration."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "focus": {
-                        "type": "string",
-                        "enum": [
-                            "complete",
-                            "environment",
-                            "action",
-                            "emotion",
-                        ],
-                        "description": "What aspect of the scene should be emphasized.",
-                    }
-                },
-                "required": [],
-                "additionalProperties": False,
-            },
-        },
-    },
 ]
 
 
@@ -98,19 +71,11 @@ TOOL_USAGE_POLICY = (
     "- Never copy verbatim. Reformulate in third person.\n"
     "- Keep concise. Store only useful information.\n\n"
     "GOOD: 'The user is named John.' (identity)\n"
-    "BAD:  'User said he's tired' (temporary)\n\n"
-    "---\n"
-    "TOOL: get_scene_state\n"
-    "---\n"
-    "PURPOSE: Retrieve scene state before narrating.\n\n"
-    "USE WHEN: user asks 'what do you see?', 'where are you?', "
-    "'what are you doing?', 'describe the scene', '/scene_view'\n\n"
-    "AFTER CALLING: narrate immersively in character. "
-    "Never output raw JSON."
+    "BAD:  'User said he's tired' (temporary)"
 )
 
 SCENE_SYSTEM_COMMAND = (
     "SYSTEM COMMAND: The user requested a scene description. "
-    "Call get_scene_state first, then narrate immersively "
-    "with sensory details. Stay in character."
+    "Describe the current environment, your actions, what you see, "
+    "hear and feel. Narrate immersively. Stay in character."
 )

@@ -10,8 +10,12 @@ from .base import VToolLlama
 from ..db import ChatStore
 from ..tools import TOOL_USAGE_POLICY
 from ..utils import TokenCounter
+from ..orquestador import ContextInjectionStrategy
 from .context_builder import ContextBuilder
-from .retrieval import RecentMessagesStrategy, SemanticRetrievalStrategy
+from .retrieval import (
+    RecentMessagesStrategy,
+    SemanticRetrievalStrategy,
+)
 
 
 def list_characters(self: VToolLlama) -> list[dict]:
@@ -33,7 +37,7 @@ def load_character(self: VToolLlama, name: str, semantic_memory: bool = False) -
 
     # Inicializar SQLite event store + ContextBuilder
     if char_dir:
-        db_path = char_dir / "memory" / "chat.db"
+        db_path = char_dir / "_memory" / "chat.db"
         self._chat_store = ChatStore(str(db_path))
 
         tokenize_fn = None
@@ -45,6 +49,7 @@ def load_character(self: VToolLlama, name: str, semantic_memory: bool = False) -
             store=self._chat_store,
             token_counter=self._token_counter,
             strategies=[
+                ContextInjectionStrategy(),
                 RecentMessagesStrategy(),
             ],
         )
@@ -71,6 +76,27 @@ def load_character(self: VToolLlama, name: str, semantic_memory: bool = False) -
     self._memory.clear()
     self._inject_personality_into_system_prompt()
 
+    # Aplicar chat template Jinja personalizado si está configurado
+    tpl_file = self._config.chat_template_file
+    if tpl_file and self._model_manager.is_loaded:
+        tpl_path = Path(tpl_file)
+        if not tpl_path.is_absolute():
+            tpl_path = Path(__file__).parent.parent / "config" / tpl_file
+        if tpl_path.exists():
+            try:
+                from llama_cpp.llama_chat_format import Jinja2ChatFormatter
+                template_str = tpl_path.read_text(encoding="utf-8")
+                eos = self._model_manager._model.tokenizer.eos_token if hasattr(self._model_manager._model, 'tokenizer') else ""
+                bos = self._model_manager._model.tokenizer.bos_token if hasattr(self._model_manager._model, 'tokenizer') else ""
+                self._model_manager._model.chat_handler = Jinja2ChatFormatter(
+                    template=template_str,
+                    eos_token=eos,
+                    bos_token=bos,
+                )
+                self._log_debug("MODEL", f"Chat template aplicado: {tpl_path}")
+            except Exception as e:
+                self._log_warning(f"No se pudo aplicar chat template: {e}")
+
     # Inicializar ChromaDB semántico (opcional, por personaje)
     enable_semantic = semantic_memory or self._config.semantic_memory_enabled
     if char_dir and enable_semantic:
@@ -78,7 +104,7 @@ def load_character(self: VToolLlama, name: str, semantic_memory: bool = False) -
             from ..db.chroma_store import ChromaStore, HAS_CHROMA
             if HAS_CHROMA:
                 self._semantic_chroma = ChromaStore(
-                    char_dir / "memory" / "semantic",
+                    char_dir / "_memory" / "semantic",
                     "conversation_chunks",
                     log_fn=lambda m: self._log_debug("SEMANTIC", m),
                 )
@@ -133,93 +159,114 @@ def generate_character_with_ai(self: VToolLlama, name: str, prompt: str) -> None
         )
 
     system_prompt = (
-        "You are an expert character designer and creative writer. "
-        "Your task is to create a rich, detailed character profile based on the user's request.\n"
-        "You MUST respond ONLY with valid JSON, no Markdown, no explanations, raw JSON only.\n"
-        "Do NOT add extra fields or change existing field names. "
-        "Use EXACTLY the key names shown in the structure below.\n\n"
-        "The character will be used in a natural conversation + roleplay system. "
-        "The system has:\n"
-        "- [SYSTEM CORE]: identity foundation (human-like communication)\n"
-        "- [INTERACTION MODE]: default behavior + roleplay gate (roleplay only when requested)\n"
-        "- [BEHAVIOR PRIORITY]: personality colors answers but doesn't block them\n"
-        "- [CONTEXT AWARENESS]: subtle personality for technical topics\n\n"
-        "Your JSON creates the character's DNA layer. "
-        "Make it psychologically deep: give the character inner conflicts, "
-        "contradictions, and a mix of strengths and flaws.\n\n"
-        "The JSON MUST have this exact structure (no extra fields):\n"
+        "You are an expert character designer. Create a rich character profile "
+        "based on the user's request.\n\n"
+        "PROCESS:\n"
+        "1. First, THINK about the character deeply. Analyze the request, "
+        "imagine their psychology, contradictions, fears, and desires.\n"
+        "2. Then, output ONLY the final JSON with the structure below.\n\n"
+        "RULES:\n"
+        "- Use EXACTLY the key names shown. No extra fields.\n"
+        "- Make it psychologically deep: inner conflicts, contradictions, "
+        "mix of strengths and flaws.\n"
+        "- speech.examples must use {{user}} and {{char}} placeholders.\n"
+        "- Write examples in the same language as the user's request.\n\n"
+        "JSON STRUCTURE:\n"
         "{\n"
         '  "identity": {\n'
         '    "name": "Public name",\n'
-        '    "role": "Their role or title",\n'
-        '    "age": "Character age",\n'
-        '    "background": "Very detailed creative backstory",\n'
+        '    "role": "Role or title",\n'
+        '    "age": "Age as text",\n'
+        '    "background": "Detailed backstory",\n'
         '    "scenario": "Current world or context"\n'
         "  },\n"
         '  "personality": {\n'
-        '    "traits": ["trait1", "trait2", "trait3"],\n'
-        '    "motivations": ["main motivation", "secondary motivation"],\n'
-        '    "flaws": ["character flaw", "main fear"],\n'
-        '    "inner_conflict": "what they want vs what they fear — a sentence",\n'
-        '    "emotional_triggers": ["loud voices → panic", "kindness → suspicion"]\n'
+        '    "traits": ["3-5 core traits"],\n'
+        '    "motivations": ["main", "secondary"],\n'
+        '    "flaws": ["flaw or fear"],\n'
+        '    "inner_conflict": "want vs fear in one sentence",\n'
+        '    "emotional_triggers": ["trigger → reaction"]\n'
         "  },\n"
         '  "speech": {\n'
-        '    "style": "e.g. Casual, Formal, Sarcastic, Poetic",\n'
-        '    "tone": "e.g. Warm, Cold, Playful",\n'
+        '    "style": "Casual, Formal, Sarcastic, Poetic...",\n'
+        '    "tone": "Warm, Cold, Playful...",\n'
         '    "verbosity": "Low, Medium or High",\n'
-        '    "speech_patterns": ["stutters under pressure", "avoids pronouns", "uses diminutives when scared"],\n'
+        '    "speech_patterns": ["stutters under pressure", "uses diminutives when scared"],\n'
         '    "examples": [\n'
-        '      "{{user}}: hello\\n{{char}}: *looks up* What do you want?",\n'
-        '      "{{user}}: help me\\n{{char}}: *sighs* I guess there\'s no other way."\n'
+        '      "{{user}}: hello\\n{{char}}: *action* response",\n'
+        '      "{{user}}: help me\\n{{char}}: *sighs* fine."\n'
         "    ]\n"
         "  },\n"
         '  "rules": {\n'
-        '    "core_rules": ["important rule 1", "rule 2"],\n'
-        '    "never_do": ["what they must never do"],\n'
-        '    "response_style": ["e.g. use asterisks for actions", "e.g. short responses"],\n'
+        '    "core_rules": ["important rules"],\n'
+        '    "never_do": ["what they never do"],\n'
+        '    "response_style": ["use asterisks for actions"],\n'
         '    "roleplay_mode": true\n'
         "  },\n"
-        '  "memories": ["initial memory 1 about themselves or the user", "memory 2"]\n'
+        '  "memories": ["initial memory 1", "memory 2"]\n'
         "}"
     )
 
     self._log_info(f"Generando personaje '{name}' con IA...")
 
-    result = self._model_manager.generate(
-        messages=[
+    def _try_extract_json(text: str) -> dict:
+        start = text.find("{")
+        end = text.rfind("}") + 1
+        if start == -1 or end == 0:
+            raise ValueError("No se encontró JSON en la respuesta.")
+        return json.loads(text[start:end])
+
+    def _try_generate(messages: list[dict], temp: float) -> tuple[dict, str]:
+        result = self._model_manager.generate(
+            messages=messages, stream=False,
+            max_tokens=3072, temperature=temp,
+        )
+        msg = result["choices"][0]["message"]
+        content_text = msg.get("content", "")
+
+        # Capturar thinking si el modelo lo soporta (DeepSeek-R1, etc.)
+        reasoning = msg.get("reasoning_content") or ""
+        if reasoning:
+            self._log_debug("DNA", f"Thinking: {reasoning[:200]}...")
+            # Buscar JSON también en el thinking por si ahí está
+            if not content_text.strip():
+                content_text = reasoning
+
+        data = _try_extract_json(content_text)
+        return data, reasoning
+
+    # Intento 1: temperatura 0.7 (balanceado, permite pensar)
+    try:
+        data, thinking = _try_generate([
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
-        ],
-        stream=False,
-        max_tokens=1024,
-        temperature=0.8,
+        ], 0.7)
+
+        if thinking:
+            self._log_info(f"Modelo usó razonamiento interno ({len(thinking)} chars)")
+
+    # Intento 2 (fallback): temperatura 0.3 + pedir solo JSON
+    except Exception as e:
+        self._log_debug("DNA", f"Primer intento falló ({e}), reintentando con baja temperatura...")
+        try:
+            data, _ = _try_generate([
+                {"role": "system", "content": "Responde SOLO con JSON."},
+                {"role": "user", "content": f"{system_prompt}\n\n{prompt}"},
+            ], 0.3)
+        except Exception as e2:
+            self._log_error(f"Fallo generando personaje. Prompt enviado:\n{system_prompt}\n\n{prompt}")
+            raise RuntimeError(f"Error tras 2 intentos: {e2}")
+
+    self.create_character(
+        name=name,
+        identity_data=data.get("identity", {}),
+        personality_data=data.get("personality", {}),
+        speech_data=data.get("speech", {}),
+        rules_data=data.get("rules", {}),
+        initial_memories=data.get("memories", []),
     )
 
-    response_text = result["choices"][0]["message"].get("content", "")
-
-    try:
-        start_idx = response_text.find("{")
-        end_idx = response_text.rfind("}") + 1
-        if start_idx == -1 or end_idx == 0:
-            raise ValueError("No se encontró JSON en la respuesta del modelo.")
-
-        clean_json = response_text[start_idx:end_idx]
-        data = json.loads(clean_json)
-
-        self.create_character(
-            name=name,
-            identity_data=data.get("identity", {}),
-            personality_data=data.get("personality", {}),
-            speech_data=data.get("speech", {}),
-            rules_data=data.get("rules", {}),
-            initial_memories=data.get("memories", []),
-        )
-
-        self._log_info(f"¡Personaje '{name}' autogenerado con éxito!")
-
-    except Exception as e:
-        self._log_error(f"Fallo al generar personaje con IA. Respuesta raw: {response_text}")
-        raise RuntimeError(f"Error parseando el personaje autogenerado: {e}")
+    self._log_info(f"Personaje '{name}' generado con éxito.")
 
 VToolLlama.generate_character_with_ai = generate_character_with_ai
 
@@ -294,48 +341,30 @@ def _warmup_character_cache(self: VToolLlama, prompt: Optional[str] = None) -> N
     if not char_dir or not self._model_manager.is_loaded:
         return
 
-    base_kv_path = char_dir / "memory" / "base.state"
-    base_soul_kv_path = char_dir / "memory" / "base_soul.state"
+    base_kv_path = char_dir / "_memory" / "base.state"
 
-    soul = getattr(self._character_manager, '_soul_accessor', None)
-    soul_active = soul is not None and soul.is_active
-
-    # 1. Base state (DNA) — se genera una vez
-    base_prompt = self._character_manager.build_base_system_prompt(self._config.system_prompt, self._config)
-    if not base_kv_path.exists():
-        self._log_debug("STATE", "Generando KV Cache Base (DNA)...")
-        self._model_manager.warmup_system_prompt(base_prompt)
-        self._model_manager.save_kv_state(str(base_kv_path))
-
-    # 2. Base Soul state (DNA + Soul) — se genera una vez si hay alma
-    if soul_active and not base_soul_kv_path.exists():
-        self._log_debug("STATE", "Generando KV Cache Base Soul (DNA + Soul)...")
-        base_soul_prompt = self._character_manager.compile_base_soul_prompt(self._config.system_prompt, self._config)
-        self._model_manager.warmup_system_prompt(base_soul_prompt)
-        self._model_manager.save_kv_state(str(base_soul_kv_path))
-
-    # 3. Cargar el base que corresponda
-    if soul_active and base_soul_kv_path.exists():
-        self._model_manager.load_kv_state(str(base_soul_kv_path))
-    else:
-        self._model_manager.load_kv_state(str(base_kv_path))
-
-    # 4. Warmup diferencial con el prompt completo (no se persiste)
+    # 1. Compilar prompt completo
     if prompt is None:
         prompt = self._character_manager.build_system_prompt(self._config.system_prompt, self._config)
 
-    self._log_debug("STATE", "Warmup diferencial del prompt completo sobre Base...")
-    self._model_manager.warmup_system_prompt(prompt)
-    self._character_manager.mark_rebuild_done(prompt)
-
-    # Guardar prompt compilado como YAML (debug)
+    # 2. Guardar prompt como YAML (debug)
     if char_dir:
-        yaml_path = char_dir / "memory" / "base_prompt.yaml"
+        yaml_path = char_dir / "_memory" / "base_prompt.yaml"
         lines = prompt.split('\n')
         yaml_lines = ["prompt: |"]
         for line in lines:
             yaml_lines.append(f"  {line}")
         yaml_path.write_text('\n'.join(yaml_lines) + '\n', encoding='utf-8')
+
+    # 3. Warmup completo del prompt y guardar como base.state
+    if not base_kv_path.exists():
+        self._log_debug("STATE", "Generando KV Cache Base (prompt completo)...")
+        self._model_manager.warmup_system_prompt(prompt)
+        self._model_manager.save_kv_state(str(base_kv_path))
+    else:
+        self._model_manager.load_kv_state(str(base_kv_path))
+
+    self._character_manager.mark_rebuild_done(prompt)
 
 VToolLlama._warmup_character_cache = _warmup_character_cache
 
@@ -472,3 +501,335 @@ def get_state_info(self: VToolLlama) -> dict:
     return state
 
 VToolLlama.get_state_info = get_state_info
+
+
+def get_character_dna(self: VToolLlama, name: Optional[str] = None) -> dict:
+    """Retorna el DNA de un personaje SIN cargarlo (lee directo de disco).
+
+    Args:
+        name: nombre del personaje. Si es None, usa el personaje cargado actualmente.
+    """
+    from dataclasses import asdict
+
+    if name is None:
+        if not self._character_manager.is_loaded:
+            raise RuntimeError("No hay personaje cargado y no se especificó name.")
+        return {
+            "identity": asdict(self._character_manager.identity),
+            "personality": asdict(self._character_manager.personality_dna),
+            "speech": asdict(self._character_manager.speech),
+            "rules": asdict(self._character_manager.rules),
+        }
+
+    # Leer directo de disco sin cargar el personaje
+    from pathlib import Path
+    base = self._character_manager._base_dir
+    char_dir = base / name
+    if not char_dir.exists() or not (char_dir / "dna").exists():
+        raise ValueError(f"Personaje '{name}' no encontrado.")
+
+    import json
+    result = {}
+    for dna_file in ("identity.json", "personality.json", "speech.json", "rules.json"):
+        path = char_dir / "dna" / dna_file
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as f:
+                result[dna_file.replace(".json", "")] = json.load(f)
+        else:
+            result[dna_file.replace(".json", "")] = {}
+
+    return {
+        "identity": result.get("identity", {}),
+        "personality": result.get("personality", {}),
+        "speech": result.get("speech", {}),
+        "rules": result.get("rules", {}),
+    }
+
+VToolLlama.get_character_dna = get_character_dna
+
+
+def get_character_prompt(self: VToolLlama, name: str) -> str:
+    """Retorna el system prompt compilado de un personaje SIN cargarlo.
+
+    Si existe base_prompt.yaml del último warmup lo retorna.
+    Si no, construye el prompt desde los archivos DNA en disco.
+    """
+    from pathlib import Path
+    base = self._character_manager._base_dir
+    char_dir = base / name
+    if not char_dir.exists() or not (char_dir / "dna").exists():
+        raise ValueError(f"Personaje '{name}' no encontrado.")
+
+    # 1. Intentar leer el YAML del último rebuild
+    yaml_path = char_dir / "_memory" / "base_prompt.yaml"
+    if yaml_path.exists():
+        lines = yaml_path.read_text(encoding="utf-8").split("\n")
+        # Saltar la primera línea "prompt: |" y el indentado "  "
+        prompt_lines = []
+        for line in lines[1:]:
+            if line.startswith("  "):
+                prompt_lines.append(line[2:])
+            else:
+                prompt_lines.append(line)
+        prompt = "\n".join(prompt_lines).strip()
+        if prompt:
+            return prompt
+
+    # 2. Fallback: construir desde DNA
+    dna = self.get_character_dna(name)
+    parts = [f"[SYSTEM CORE]\nEres {dna['identity'].get('name', name)}."]
+    if dna['identity'].get('role'):
+        parts.append(f"Tu rol es {dna['identity']['role']}.")
+    if dna['personality'].get('traits'):
+        parts.append(f"[PERSONALIDAD]\n{', '.join(dna['personality']['traits'])}")
+    if dna['speech'].get('style'):
+        parts.append(f"[ESTILO]\n{dna['speech']['style']}")
+    if dna['rules'].get('core_rules'):
+        for r in dna['rules']['core_rules']:
+            parts.append(f"- {r}")
+
+    return "\n".join(parts)
+
+VToolLlama.get_character_prompt = get_character_prompt
+
+
+def update_character_dna(self: VToolLlama, dna_type: str, data: dict,
+                         character_name: Optional[str] = None) -> None:
+    """Actualiza el DNA de un personaje SIN interrumpir el chat activo.
+
+    Si se pasa character_name, escribe directo a disco sin cargar el
+    personaje. Si no, actualiza el personaje actualmente cargado.
+
+    Args:
+        dna_type: "identity", "personality", "speech" o "rules"
+        data: dict con campos a actualizar (merge sobre el actual)
+        character_name: si se pasa, escribe directo a disco sin cargar
+    """
+    import json
+    from pathlib import Path
+
+    # Determinar directorio del personaje
+    if character_name:
+        base = self._character_manager._base_dir
+        char_dir = base / character_name
+        if not char_dir.exists() or not (char_dir / "dna").exists():
+            raise ValueError(f"Personaje '{character_name}' no encontrado.")
+    else:
+        if not self._character_manager.is_loaded:
+            raise RuntimeError("No hay personaje cargado y no se especificó character_name.")
+        char_dir = self._character_manager._char_dir
+
+    if not char_dir:
+        raise RuntimeError("No hay directorio de personaje.")
+
+    filename = f"{dna_type}.json"
+    path = char_dir / "dna" / filename
+
+    # Leer estado actual del disco
+    current = {}
+    if path.exists():
+        with open(path, "r", encoding="utf-8") as f:
+            current = json.load(f)
+
+    # Mergear y escribir
+    merged = {**current, **data}
+    self._character_manager._write_json(path, merged)
+    self._character_manager._log("DNA", f"{filename} actualizado en disco sin carga.")
+
+    # Si estamos editando el personaje cargado, actualizar también en memoria
+    if not character_name or (self._character_manager.is_loaded
+                              and self._character_manager._char_dir == char_dir):
+        from ..types import IdentityDNA, PersonalityDNA, SpeechDNA, RulesDNA
+        from dataclasses import asdict
+        mapping = {
+            "identity": (IdentityDNA, self._character_manager.identity),
+            "personality": (PersonalityDNA, self._character_manager.personality_dna),
+            "speech": (SpeechDNA, self._character_manager.speech),
+            "rules": (RulesDNA, self._character_manager.rules),
+        }
+        if dna_type in mapping:
+            dc_type, current_obj = mapping[dna_type]
+            updated = dc_type(**merged)
+            setattr(self._character_manager, {
+                "identity": "identity",
+                "personality": "personality_dna",
+                "speech": "speech",
+                "rules": "rules",
+            }[dna_type], updated)
+            self._character_manager._prompt_dirty = True
+            self._character_manager._needs_rebuild = True
+            self._character_manager._log("DNA", f"{dna_type} actualizado en memoria.")
+
+VToolLlama.update_character_dna = update_character_dna
+
+
+def get_states(self: VToolLlama) -> dict:
+    """Retorna los estados runtime del personaje."""
+    if not self._character_manager.is_loaded:
+        raise RuntimeError("No hay personaje cargado.")
+    from dataclasses import asdict
+    return {
+        "runtime": asdict(self._character_manager.runtime_state),
+        "personality": asdict(self._character_manager.personality_state),
+        "relationship": asdict(self._character_manager.relationship_state),
+    }
+
+VToolLlama.get_states = get_states
+
+
+def update_state(self: VToolLlama, state_type: str, data: dict) -> None:
+    """Actualiza un estado runtime y persiste.
+
+    Args:
+        state_type: "runtime", "personality" o "relationship"
+        data: dict con campos a actualizar (merge sobre el estado actual)
+    """
+    if not self._character_manager.is_loaded:
+        raise RuntimeError("No hay personaje cargado.")
+
+    from ..types import RuntimeState, PersonalityState, RelationshipState
+    from dataclasses import asdict
+
+    mapping = {
+        "runtime": (RuntimeState, self._character_manager.runtime_state),
+        "personality": (PersonalityState, self._character_manager.personality_state),
+        "relationship": (RelationshipState, self._character_manager.relationship_state),
+    }
+    if state_type not in mapping:
+        raise ValueError(f"Tipo inválido: {state_type}. Usá: runtime, personality, relationship")
+
+    dc_type, current = mapping[state_type]
+    merged = {**asdict(current), **data}
+    updated = dc_type(**merged)
+
+    if state_type == "runtime":
+        self._character_manager.runtime_state = updated
+    elif state_type == "personality":
+        self._character_manager.personality_state = updated
+    elif state_type == "relationship":
+        self._character_manager.relationship_state = updated
+
+    self._character_manager.save_state()
+    self._character_manager._log("STATE", f"{state_type} actualizado.")
+
+VToolLlama.update_state = update_state
+
+
+def get_mods(self: VToolLlama) -> list[dict]:
+    """Retorna la lista de mods activos del personaje."""
+    if not self._character_manager.is_loaded:
+        return []
+    from dataclasses import asdict
+    return [asdict(m) for m in self._character_manager.active_mods.values()]
+
+VToolLlama.get_mods = get_mods
+
+
+def set_mod(self: VToolLlama, mod_id: str, target_layer: str = "speech",
+            override_value: str = "", intensity: float = 1.0) -> None:
+    """Aplica un mod temporal al personaje."""
+    from ..types import CharacterMod
+    mod = CharacterMod(id=mod_id, target_layer=target_layer,
+                       override_value=override_value, intensity=intensity)
+    self._character_manager.set_mod(mod)
+    self._character_manager._log("MOD", f"Mod '{mod_id}' aplicado en {target_layer}.")
+
+VToolLlama.set_mod = set_mod
+
+
+def remove_mod(self: VToolLlama, mod_id: str) -> None:
+    """Elimina un mod activo."""
+    self._character_manager.remove_mod(mod_id)
+    self._character_manager._log("MOD", f"Mod '{mod_id}' eliminado.")
+
+VToolLlama.remove_mod = remove_mod
+
+
+def get_system_layer(self: VToolLlama, layer: str, character_name: Optional[str] = None) -> str:
+    """Retorna el contenido de un YAML del personaje SIN cargarlo.
+
+    Args:
+        layer: "system_core", "anti_assistant", "roleplay_mode"
+        character_name: nombre del personaje. Si es None, usa el cargado.
+    """
+    from pathlib import Path
+    base = self._character_manager._base_dir
+    filename = f"{layer}.yaml" if layer.endswith(".yaml") else f"{layer}.yaml"
+
+    if character_name:
+        base = self._character_manager._base_dir
+        char_dir = base / character_name
+        if not char_dir.exists() or not (char_dir / "dna").exists():
+            raise ValueError(f"Personaje '{character_name}' no encontrado.")
+    elif self._character_manager.is_loaded:
+        char_dir = self._character_manager._char_dir
+    else:
+        raise RuntimeError("No hay personaje cargado y no se especificó character_name.")
+
+    paths = [char_dir / filename, base / "default" / filename]
+    for path in paths:
+        try:
+            if path and path.exists():
+                text = path.read_text(encoding="utf-8")
+                lines = text.split("\n")
+                prompt_lines = []
+                in_prompt = False
+                for line in lines:
+                    if line.startswith("prompt: |"):
+                        in_prompt = True
+                    elif in_prompt:
+                        if line.startswith("  "):
+                            prompt_lines.append(line[2:])
+                        elif line == "":
+                            prompt_lines.append("")
+                        else:
+                            break
+                if prompt_lines:
+                    return "\n".join(prompt_lines)
+        except Exception:
+            continue
+    return ""
+
+VToolLlama.get_system_layer = get_system_layer
+
+
+def update_system_layer(self: VToolLlama, layer: str, content: str,
+                        character_name: Optional[str] = None) -> None:
+    """Actualiza un YAML del personaje (system_core, anti_assistant, roleplay_mode).
+
+    Args:
+        layer: "system_core", "anti_assistant", "roleplay_mode"
+        content: texto completo del prompt
+        character_name: si se pasa, escribe directo a disco sin cargar
+    """
+    from pathlib import Path
+
+    if character_name:
+        base = self._character_manager._base_dir
+        char_dir = base / character_name
+        if not char_dir.exists() or not (char_dir / "dna").exists():
+            raise ValueError(f"Personaje '{character_name}' no encontrado.")
+    else:
+        if not self._character_manager.is_loaded:
+            raise RuntimeError("No hay personaje cargado y no se especificó character_name.")
+        char_dir = self._character_manager._char_dir
+
+    filename = f"{layer}.yaml"
+    lines = content.split("\n")
+    yaml_lines = ["prompt: |"]
+    for line in lines:
+        yaml_lines.append(f"  {line}")
+    yaml_lines.append("")
+
+    path = char_dir / filename
+    path.write_text("\n".join(yaml_lines), encoding="utf-8")
+    self._character_manager._log("YAML", f"{filename} actualizado.")
+
+    # Si es el personaje cargado, marcar dirty
+    if not character_name or (self._character_manager.is_loaded
+                              and self._character_manager._char_dir == char_dir):
+        self._character_manager._prompt_dirty = True
+        self._character_manager._needs_rebuild = True
+        self._character_manager._log("YAML", f"{filename} marcado para rebuild.")
+
+VToolLlama.update_system_layer = update_system_layer

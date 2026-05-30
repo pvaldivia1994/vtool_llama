@@ -126,3 +126,7 @@ class SemanticRetrievalStrategy(RetrievalStrategy):
             tokens=running,
             messages=[{"role": "system", "content": f"[MEMORIA SEMÁNTICA]\n{content}"}] if content else [],
         )
+
+
+# Las estrategias SceneContextStrategy y ContextInjectionStrategy
+# se movieron a orquestador/strategies.py

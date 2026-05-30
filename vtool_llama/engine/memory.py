@@ -71,20 +71,30 @@ def _auto_trim_if_needed(self: VToolLlama) -> None:
     if not self._model_manager.is_loaded:
         return
 
-    context_text = " ".join(
-        m.content for m in self._memory.messages if m.content
-    )
-    current_tokens = self._model_manager.count_tokens(context_text)
-
     from .tokenizer_utils import is_context_near_limit
 
-    if is_context_near_limit(
-        current_tokens=current_tokens,
-        max_tokens=self._config.n_ctx,
-        reserve_tokens=self._config.context_reserve_tokens,
-    ):
-        self._log_debug("MEMORY", f"Auto-trim: {len(self._memory.messages)} mensajes en contexto ({current_tokens} tokens).")
-        self._memory.clear()
+    while len(self._memory._messages) > 2:
+        context_text = " ".join(
+            m.content for m in self._memory._messages if m.content
+        )
+        current_tokens = self._model_manager.count_tokens(context_text)
+
+        if not is_context_near_limit(
+            current_tokens=current_tokens,
+            max_tokens=self._config.n_ctx,
+            reserve_tokens=self._config.context_reserve_tokens,
+        ):
+            break
+
+        # Eliminar el mensaje no-system más antiguo (después del system prompt)
+        for i, m in enumerate(self._memory._messages):
+            if m.role != "system":
+                removed = self._memory._messages[i]
+                del self._memory._messages[i]
+                self._log_debug("MEMORY", f"Auto-trim: eliminado mensaje #{i} ({removed.role}: {str(removed.content)[:50]}...)")
+                break
+        else:
+            break
 
 VToolLlama._auto_trim_if_needed = _auto_trim_if_needed
 

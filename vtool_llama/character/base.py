@@ -147,8 +147,8 @@ class CharacterManager:
                 self._char_dir = char_dir
                 self._prompt_dirty = True
 
-                self._ensure_dir(self._char_dir / "memory")
-                self._ensure_dir(self._char_dir / "memory" / "episodes")
+                self._ensure_dir(self._char_dir / "_memory")
+                self._ensure_dir(self._char_dir / "_memory" / "episodes")
                 self._ensure_dir(self._char_dir / "state")
                 self._ensure_dir(self._char_dir / "mods")
 
@@ -213,8 +213,8 @@ class CharacterManager:
                 raise ValueError(f"El personaje '{name}' ya existe en {self._base_dir}")
 
             self._ensure_dir(char_dir / "dna")
-            self._ensure_dir(char_dir / "memory")
-            self._ensure_dir(char_dir / "memory" / "episodes")
+            self._ensure_dir(char_dir / "_memory")
+            self._ensure_dir(char_dir / "_memory" / "episodes")
             self._ensure_dir(char_dir / "state")
             self._ensure_dir(char_dir / "mods")
 
@@ -234,7 +234,7 @@ class CharacterManager:
                         "always_include": True,
                         "tags": [],
                     })
-            self._write_json(char_dir / "memory" / "long_term.json", {"memories": mems})
+            self._write_json(char_dir / "_memory" / "long_term.json", {"memories": mems})
 
             self._write_json(char_dir / "state" / "state_meta.json", {"prompt_hash": ""})
             self._write_json(char_dir / "state" / "runtime_state.json", asdict(RuntimeState()))
@@ -249,7 +249,7 @@ class CharacterManager:
             else:
                 self._write_json(char_dir / "config.json", {})
 
-            for yaml_file in ("system_core.yaml", "anti_assistant_layer.yaml"):
+            for yaml_file in ("system_core.yaml", "anti_assistant.yaml", "roleplay_mode.yaml"):
                 src = self._base_dir / "default" / yaml_file
                 if src.exists():
                     shutil.copy2(str(src), str(char_dir / yaml_file))

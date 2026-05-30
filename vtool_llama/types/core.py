@@ -69,4 +69,7 @@ class ConfigSchema:
     auto_summary_interval: int = 10
     auto_summary_reason: str = "interval"
     semantic_memory_enabled: bool = False
+    disable_thinking: bool = False
     context_snapshot_debug: bool = False
+    chat_template_file: str = ""
+    inject_scene_context: bool = False

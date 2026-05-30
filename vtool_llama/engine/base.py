@@ -45,7 +45,6 @@ from ..utils import TokenCounter
 from ..soul import SoulGenerator, RuntimeSoulAccessor
 from ..tools import (
     INTERNAL_TOOLS,
-    SCENE_SYSTEM_COMMAND,
     TOOL_USAGE_POLICY,
     ToolExecutionManager,
     StreamPostProcessor,
@@ -53,7 +52,6 @@ from ..tools import (
     strip_text_tool_calls,
     execute_text_tool,
     has_memory_trigger,
-    has_scene_trigger,
 )
 
 
@@ -213,6 +211,17 @@ class VToolLlama:
     def supports_tools(self) -> bool:
         return self._model_manager.supports_tools()
 
+    def generate_raw(self, messages: list[dict], **kwargs) -> Any:
+        """Genera una respuesta con el modelo SIN system prompt ni inyección de personalidad.
+        Útil para procesar DNA, traducciones, mejoras de personaje, etc.
+
+        Args:
+            messages: lista de dicts con role y content (formato OpenAI)
+            **kwargs: max_tokens, temperature, top_p, etc.
+        """
+        with self._lock:
+            return self._model_manager.generate(messages=messages, **kwargs)
+
     @property
     def model_loading(self) -> bool:
         return self._model_manager.loading
@@ -311,9 +320,13 @@ class VToolLlama:
             return []
         return self._chat_store.get_message_path(leaf_message_id)
 
-    def get_chat_history(self, limit: int = 100) -> list[dict]:
+    def get_chat_history(self, limit: int = 100, include_context: bool = False) -> list[dict]:
         """Retorna el historial de la conversación activa como list[dict].
         Cada dict tiene: id, role, content, status, created_at, branch_id.
+
+        Args:
+            limit: cantidad máxima de mensajes
+            include_context: si es True, incluye mensajes role='context'
         """
         if not self._chat_store or not self._memory._conversation_id:
             return []
@@ -323,8 +336,11 @@ class VToolLlama:
             self._memory._active_leaf_id,
             limit=limit,
         )
-        return [
-            {
+        result = []
+        for m in messages:
+            if not include_context and m.role == "context":
+                continue
+            result.append({
                 "id": m.id,
                 "role": m.role,
                 "content": m.content,
@@ -332,9 +348,57 @@ class VToolLlama:
                 "created_at": m.created_at,
                 "branch_id": m.branch_id,
                 "message_index": m.message_index,
-            }
-            for m in messages
-        ]
+            })
+        return result
+
+    def get_token_usage(self) -> dict:
+        """Retorna estadísticas de uso de tokens del contexto actual.
+
+        Returns:
+            dict con:
+              - system_tokens: tokens del system prompt
+              - history_tokens: tokens del historial (sin system)
+              - total_tokens: system + history
+              - max_tokens: n_ctx configurado
+              - reserved: context_reserve_tokens
+              - budget_available: tokens disponibles para la respuesta
+              - usage_pct: porcentaje usado (0-100)
+              - messages: cantidad de mensajes en RAM
+        """
+        max_tokens = self._config.n_ctx
+        reserved = self._config.context_reserve_tokens
+
+        def _count(text: str) -> int:
+            if not text:
+                return 0
+            if self._model_manager.is_loaded:
+                return self._model_manager.count_tokens(text)
+            return max(1, round(len(text) / 4))
+
+        system_text = ""
+        history_text = ""
+        for m in self._memory.messages:
+            if m.role == "system" and m.content:
+                system_text += " " + m.content
+            elif m.content:
+                history_text += " " + m.content
+
+        system_tokens = _count(system_text)
+        history_tokens = _count(history_text)
+        total_tokens = system_tokens + history_tokens
+        budget_available = max(0, max_tokens - reserved - total_tokens)
+        usage_pct = round((total_tokens / max_tokens) * 100, 1) if max_tokens > 0 else 0
+
+        return {
+            "system_tokens": system_tokens,
+            "history_tokens": history_tokens,
+            "total_tokens": total_tokens,
+            "max_tokens": max_tokens,
+            "reserved": reserved,
+            "budget_available": budget_available,
+            "usage_pct": usage_pct,
+            "messages": len(self._memory.messages),
+        }
 
     def mark_semantic_dirty(self) -> None:
         """Marca la conversación actual para rebuild semántico.

@@ -35,10 +35,25 @@ Define `VToolLlama`, la clase principal. Constructor inicializa todos los gestor
 | `__init__(config_path, auto_load)` | Inicializa ConfigManager → LoggerManager → ChatMemory → StatsManager → ModelManager → CharacterManager (con `characters_directory` de config si existe) → ToolExecutionManager → SoulGenerator → SlashCommandRegistry. Carga modelo si `auto_load=True` |
 | `load_model(path)` / `unload_model()` / `switch_model(path)` / `reload_model()` | Delega en `ModelManager` |
 | `get_model_info()` / `list_available_models()` / `supports_tools()` | Consultas de capacidad del modelo |
+| `generate_raw(messages, **kwargs) → Any` | Genera respuesta sin system prompt ni inyección de personalidad. Ideal para procesar DNA con IA |
 | `get_config()` / `reload_config()` | Configuración |
 | `enable_debug()` / `disable_debug()` | Debug toggle |
+| `model_loading` (property) | `True` si el modelo se está cargando |
 | `state_manager` (property) | Acceso a `CharacterManager` |
 | `slash_commands` (property) | Acceso a `SlashCommandRegistry` |
+| `chat_store` (property) | Acceso a `ChatStore` (SQLite event store) |
+| `token_counter` (property) | Acceso a `TokenCounter` |
+| `semantic_saving` (property) | `True` si se está indexando en ChromaDB |
+| `checkout(branch_id, leaf_message_id)` | Rollback no destructivo a un punto del historial |
+| `delete_message(message_id)` | Soft-delete de un mensaje |
+| `regenerate_response(message_id, label="") → str` | Crea branch desde un mensaje y checkout |
+| `get_conversation_tree() → list[Branch]` | Lista todas las ramas de la conversación |
+| `get_message_path(leaf_id) → list[ChatMessage]` | Reconstruye camino desde raíz hasta leaf |
+| `get_chat_history(limit=100) → list[dict]` | Historial de la conversación activa |
+| `index_conversation(incremental=True) → int` | Indexa conversación en ChromaDB |
+| `rebuild_semantic_memory() → int` | Forza rebuild completo del índice semántico |
+| `mark_semantic_dirty()` | Marca para rebuild en próximo index |
+| `active_auto_save_at(interval)` | Activa auto-guardado cada N mensajes |
 | `__enter__` / `__exit__` | Context manager: auto-guarda episodio al cerrar |
 | `_log_debug/info/warning/error` | Logging helpers |
 
@@ -48,8 +63,8 @@ Define `VToolLlama`, la clase principal. Constructor inicializa todos los gestor
 |--------|-----|
 | `chat(prompt, ...)` | Chat sincrónico con loop de Auto-Tools (hasta 3 iteraciones): inyecta contexto Soul + ChatMemory, genera, maneja tool calls, coercion retry, drift detection |
 | `stream_chat(prompt, ...)` | Streaming con `StreamPostProcessor` para intercepción de tools en vuelo |
-| `chat_with_thinking(prompt, ...)` | Soporte `reasoning_content` nativo + parseo de etiquetas `<think>` |
-| `stream_chat_with_thinking(prompt, ...)` | Streaming con detección incremental de `<think>`/`</think>` |
+| `chat_with_thinking(prompt, ...)` | Soporte `reasoning_content` nativo + parseo de `<think>`. Si `disable_thinking=true` en config, delega a `chat()` |
+| `stream_chat_with_thinking(prompt, ...)` | Streaming con detección de `<think>`. Si `disable_thinking=true`, delega a `stream_chat()` |
 | `add_tool_message(content, id)` | Agrega respuesta de herramienta al historial |
 | `_inject_soul_context_into_messages(messages, prompt)` | Inyecta recuerdos del Soul System |
 | `_inject_chat_memory_into_messages(messages, prompt)` | Inyecta turnos pasados relevantes desde ChromaDB |
@@ -71,15 +86,25 @@ Define `VToolLlama`, la clase principal. Constructor inicializa todos los gestor
 
 | Método | Rol |
 |--------|-----|
-| `load_character(name) → CharacterLoadResult` | Cancela carga previa, carga personaje + mergea config + warmup KV Cache dual (Base + Full). Retorna resultado con logs, soul_active, psychology_active |
+| `load_character(name, semantic_memory=False) → CharacterLoadResult` | Cancela carga previa, carga personaje + mergea config + init ChatStore/ContextBuilder + warmup KV Cache. Retorna resultado con logs, soul_active, psychology_active |
 | `create_character(...)` | Crea estructura de directorios |
-| `generate_character_with_ai(name, prompt)` | Usa LLM para generar personaje completo |
+| `generate_character_with_ai(name, prompt)` | Usa LLM para generar personaje completo (con doble intento + captura de reasoning_content si el modelo lo soporta) |
 | `generate_character_soul(...)` | Genera alma (delega en SoulGenerator) |
 | `has_character_soul(name)` / `get_character_soul(name)` | Consultas de alma |
 | `add_memory(...)` | Agrega memoria persistente |
 | `get_state_info()` | Estado actual del agente |
-| `rebuild_personality_state()` | Reconstruye personalidad desde historial |
-| `_warmup_character_cache(prompt)` | Arquitectura dual de KV Cache: Base (DNA) + Base Soul (DNA+Soul) + Full (DNA+Memoria) |
+| `get_character_dna(name=None) → dict` | Retorna DNA del personaje (lee de disco si se pasa name, sin cargar) |
+| `update_character_dna(dna_type, data, character_name=None)` | Actualiza DNA y persiste a disco. Si se pasa character_name, no carga el personaje |
+| `get_character_prompt(name) → str` | Retorna system prompt compilado desde base_prompt.yaml o construido desde DNA |
+| `get_system_layer(layer, character_name) → str` | Lee system_core.yaml o anti_assistant.yaml |
+| `update_system_layer(layer, content, character_name)` | Escribe system_core.yaml o anti_assistant.yaml |
+| `get_states() → dict` | Retorna runtime_state, personality_state, relationship_state |
+| `update_state(state_type, data)` | Actualiza y persiste un estado runtime |
+| `get_mods() → list[dict]` | Retorna mods activos |
+| `set_mod(id, target_layer, override_value, intensity)` | Aplica un mod temporal |
+| `remove_mod(mod_id)` | Elimina un mod |
+| `rebuild_personality_state()` | Reconstruye personalidad desde historial + guarda base_prompt.yaml |
+| `_warmup_character_cache(prompt)` | Compila prompt completo → guarda `base_prompt.yaml` → warmup total → guarda `base.state` |
 | `_inject_personality_into_system_prompt()` | Inyecta tool policy + personalidad en system prompt |
 | `_check_and_rebuild_if_needed()` | Rebuild automático antes del chat si hay memorias nuevas |
 
@@ -96,7 +121,7 @@ Define `VToolLlama`, la clase principal. Constructor inicializa todos los gestor
 
 ### `slash_commands.py` — Handlers de Slash Commands
 
-Métodos `_cmd_*` asignados a `VToolLlama`: `mem`, `rebuild`, `state`, `memories`, `mood`, `rel`, `help`, `scene_view`, `save_episode`, `episodes`.
+Métodos `_cmd_*` asignados a `VToolLlama`: `mem`, `rebuild`, `state`, `memories`, `mood`, `rel`, `help`, `scene_view`, `save_episode`, `episodes`, `history`, `autosave`, `semantic`, `clean`, `config`, `context`.
 
 ### `slash_registry.py` — SlashCommandRegistry
 
@@ -234,7 +259,11 @@ VToolLlama.load_character(name)
 ├── TokenCounter(tokenize_fn)      → contador centralizado
 ├── ContextBuilder(store, counter, strategies) → orquestador
 ├── ChatMemory.bind_store()        → vincula al store
-├── Config merge + KV warmup
+├── Config merge
+├── _warmup_character_cache():
+│   ├── build_system_prompt()      → prompt completo (DNA + templates + todo)
+│   ├── guarda base_prompt.yaml    → debug
+│   └── warmup + save base.state   → KV Cache inicial completo
 ├── ChatMemory.load_context()      → reconstruye desde SQLite vía ContextBuilder
 └── Personality injection
 

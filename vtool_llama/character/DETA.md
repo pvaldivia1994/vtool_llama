@@ -11,7 +11,7 @@ characters/<nombre>/
 │   ├── personality.json        # PersonalityDNA
 │   ├── speech.json             # SpeechDNA
 │   └── rules.json              # RulesDNA
-├── memory/
+├── _memory/
 │   ├── long_term.json          # Memorias persistentes (MemoryEntry[])
 │   ├── episodes/               # Snapshots episódicos versionados
 │   │   ├── episode_001.json
@@ -26,7 +26,7 @@ characters/<nombre>/
 │   └── active_mods.json        # Mods temporales activos
 ├── config.json                 # Overrides de configuración
 ├── system_core.yaml            # System prompt (human-like behavior)
-└── anti_assistant_layer.yaml   # Anti-assistant constraints
+└── anti_assistant.yaml   # Anti-assistant constraints
 ```
 
 ## Archivos del Subpackage
@@ -66,7 +66,7 @@ Métodos asignados a `CharacterManager` para carga/guardado de datos:
 | Método | Archivo que persiste |
 |--------|---------------------|
 | `_load_dna()` | `dna/{identity,personality,speech,rules}.json` |
-| `_load_memory()` | `memory/long_term.json` |
+| `_load_memory()` | `_memory/long_term.json` |
 | `_load_state()` | `state/{runtime,personality,relationship}_state.json` + `state_meta.json` |
 | `_load_mods()` | `mods/active_mods.json` |
 | `save_state()` | Todos los anteriores (escritura atómica con `.tmp`) |

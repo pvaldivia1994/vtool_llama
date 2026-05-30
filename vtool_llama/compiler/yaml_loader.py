@@ -100,7 +100,7 @@ CharacterCompiler._resolve_system_core = _resolve_system_core
 
 
 def _resolve_anti_assistant(self: CharacterCompiler) -> str:
-    prompt = self._load_yaml_prompt("anti_assistant_layer.yaml")
+    prompt = self._load_yaml_prompt("anti_assistant.yaml")
     if prompt:
         return prompt
     return (
@@ -177,3 +177,12 @@ def _resolve_anti_assistant(self: CharacterCompiler) -> str:
     )
 
 CharacterCompiler._resolve_anti_assistant = _resolve_anti_assistant
+
+
+def _resolve_roleplay_mode(self: CharacterCompiler) -> str:
+    prompt = self._load_yaml_prompt("roleplay_mode.yaml")
+    if prompt:
+        return "\n" + prompt.strip()
+    return ""
+
+CharacterCompiler._resolve_roleplay_mode = _resolve_roleplay_mode

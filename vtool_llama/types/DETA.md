@@ -24,7 +24,7 @@ Barrel. Importa y re-exporta los 24 tipos desde los 3 submódulos. No define nad
 | `Message` | `role`, `content`, `tool_calls`, `tool_call_id` | Historial de chat en formato OpenAI |
 | `ModelInfo` | `model_name`, `context_size`, `gpu_layers`, `estimated_vram_gb`, `loaded` | Metadatos del modelo GGUF cargado |
 | `GenerationStats` | `prompt_tokens`, `completion_tokens`, `tokens_per_second`, `duration_ms` | Estadísticas de cada inferencia |
-| `ConfigSchema` | ~25 campos: `n_ctx`, `temperature`, `gpu_layers`, `models_directory`, etc. | Esquema del `config.json` |
+| `ConfigSchema` | ~30 campos: `n_ctx`, `temperature`, `gpu_layers`, `chat_memory_limit`, `disable_thinking`, `semantic_memory_enabled`, etc. | Esquema del `config.json` |
 
 ### `character.py` — Tipos del Character System
 
@@ -41,8 +41,8 @@ Barrel. Importa y re-exporta los 24 tipos desde los 3 submódulos. No define nad
 
 | Tipo | Campos | Persiste en |
 |------|--------|-------------|
-| `MemoryEntry` | `id`, `content`, `priority`, `always_include`, `tags` | `memory/long_term.json` |
-| `EpisodeSnapshot` | `episode_id`, `timestamp`, `summary`, `messages` | `memory/episodes/episode_NNN.json` |
+| `MemoryEntry` | `id`, `content`, `priority`, `always_include`, `tags` | `_memory/long_term.json` |
+| `EpisodeSnapshot` | `episode_id`, `timestamp`, `summary`, `messages` | `_memory/episodes/episode_NNN.json` |
 
 **Estado Runtime:**
 
@@ -52,12 +52,18 @@ Barrel. Importa y re-exporta los 24 tipos desde los 3 submódulos. No define nad
 | `RelationshipState` | `trust_level`, `familiarity`, `affective_memory`, `dynamics` | `state/relationship_state.json` |
 | `PersonalityState` | `base_personality`, `emotional_signature`, `user_model`, `behavior_summary` | `state/personality_state.json` |
 
-**Mods & Load Result:**
+**Mods, Load Result & Chat Types:**
 
 | Tipo | Campos | Persiste en |
 |------|--------|-------------|
 | `CharacterMod` | `id`, `target_layer`, `override_value`, `intensity` | `mods/active_mods.json` |
 | `CharacterLoadResult` | `success`, `character_name`, `soul_active`, `psychology_active`, `logs`, `error` | No persiste — retorno de `load_character()` |
+| `ChatMessage` | `id`, `conversation_id`, `branch_id`, `message_index`, `role`, `content`, `status` | SQLite `messages` |
+| `ConversationSummary` | `id`, `start_message_id`, `end_message_id`, `summary`, `reason`, `embedding_id` | SQLite `summaries` (episodios, escenas, contexto) |
+| `ContextEntry` | `id`, `ctx_type`, `content`, `tag`, `order`, `created_at` | SQLite `summaries` con `reason='ctx_{type}'` |
+| `PromptSection` | `type`, `priority`, `tokens`, `messages` | No persiste — usado por ContextBuilder |
+| `Branch` | `id`, `parent_branch_id`, `created_from_message_id`, `label` | SQLite `branches` |
+| `Conversation` | `id`, `character_name`, `active_branch_id`, `active_leaf_message_id` | SQLite `conversations` |
 
 ### `psychology.py` — Tipos de Psicología y Soul
 

@@ -1,6 +1,6 @@
 # vtool_llama — Arquitectura del Proyecto
 
-SDD para agentes. Librería de IA conversacional local para Windows que usa modelos GGUF via `llama-cpp-python`. Organizada en 9 subpackages por dominio, cada uno con su propio `AGENT.md` (resumen + trigger) y `DETA.md` (arquitectura detallada).
+SDD para agentes. Librería de IA conversacional local para Windows que usa modelos GGUF via `llama-cpp-python`. Organizada en 11 subpackages por dominio, cada uno con su propio `AGENT.md` (resumen + trigger) y `DETA.md` (arquitectura detallada).
 
 ```
 vtool_llama/
@@ -10,9 +10,11 @@ vtool_llama/
 ├── psychology/       # Psychology Engine v2: psicología runtime emergente
 ├── character/        # CharacterManager: carga, persistencia, episodios
 ├── compiler/         # CharacterCompiler: ensamblado del system prompt
+├── orquestador/      # ContextInjector: contexto dinámico inyectable ([CONTEXT][...])
 ├── tools/            # Tool system: function calling, parseo, ejecución
-├── types/            # Dataclasses compartidas (core, character, psychology)
-├── db/               # ChromaDB wrapper + file I/O utilities
+├── types/            # Dataclasses compartidas (core, character, chat, psychology)
+├── db/               # ChatStore (SQLite event store) + ChromaDB wrapper + file I/O
+├── utils/            # Utilidades: TokenCounter
 ├── exceptions.py     # Jerarquía de errores
 └── __init__.py       # Public API barrel
 ```
@@ -32,7 +34,7 @@ Cada subpackage contiene:
 ### `engine/` — `vtool_llama/engine/AGENT.md`
 **Trigger**: El usuario pregunta sobre `VToolLlama`, chat, streaming, carga de modelo, configuración, logging, estadísticas, memoria de conversación, o el entry point de la librería.
 
-Contenido: `base.py` (VToolLlama class), `chat.py`, `character.py`, `memory.py`, `slash_commands.py`, `slash_registry.py`, `internal.py`, `chat_memory.py`, `config_manager.py`, `logger_manager.py`, `stats_manager.py`, `tokenizer_utils.py`.
+Contenido: `base.py` (VToolLlama class), `chat.py`, `character.py`, `memory.py`, `slash_commands.py`, `slash_registry.py`, `internal.py`, `chat_memory.py`, `config_manager.py`, `logger_manager.py`, `stats_manager.py`, `tokenizer_utils.py`, `context_builder.py` (orquestador de contexto), `retrieval.py` (estrategias de recuperación).
 
 ### `model/` — `vtool_llama/model/AGENT.md`
 **Trigger**: El usuario pregunta sobre carga/descarga de modelos GGUF, generación de texto, detección CUDA, warmup de KV Cache, conteo de tokens, o soporte de tool calling.
@@ -52,12 +54,12 @@ Contenido: `emotional_dynamics.py` (EmotionalDynamics), `synthesizer.py` (Psycho
 ### `character/` — `vtool_llama/character/AGENT.md`
 **Trigger**: El usuario pregunta sobre personajes, DNA, memoria persistente, episodios, estados runtime, psychology engine, o modificadores (mods).
 
-Contenido: `base.py` (CharacterManager), `persistence.py`, `episodes.py`, `chat_history.py`, `psychology_init.py`.
+Contenido: `base.py` (CharacterManager), `persistence.py`, `episodes.py`, `psychology_init.py`.
 
 ### `compiler/` — `vtool_llama/compiler/AGENT.md`
-**Trigger**: El usuario pregunta sobre el system prompt del personaje, capas del prompt, archivos YAML de personaje, resolución de conflictos entre capas, o modificación de cómo se ensambla el prompt.
+**Trigger**: El usuario pregunta sobre el system prompt del personaje, capas del prompt, archivos YAML/ templates `.md` de personaje, resolución de conflictos entre capas, o modificación de cómo se ensambla el prompt.
 
-Contenido: `compiler.py` (CharacterCompiler + constantes), `yaml_loader.py`, `dna_layers.py`.
+Contenido: `compiler.py` (CharacterCompiler), `yaml_loader.py`, `dna_layers.py` (templates `.md` + `_render_template()`).
 
 ### `tools/` — `vtool_llama/tools/AGENT.md`
 **Trigger**: El usuario pregunta sobre tools, function calling, tool calls en texto plano o estructurado, parseo, ejecución de herramientas internas (memoria, escena), o procesamiento streaming con tools.
@@ -70,9 +72,9 @@ Contenido: `definitions.py`, `parser.py`, `manager.py` (ToolExecutionManager), `
 Contenido: `core.py`, `character.py`, `psychology.py`.
 
 ### `db/` — `vtool_llama/db/AGENT.md`
-**Trigger**: El usuario pregunta sobre almacenamiento vectorial, ChromaDB, búsqueda semántica, lectura/escritura de archivos JSON, escritura atómica, o persistencia de datos.
+**Trigger**: El usuario pregunta sobre almacenamiento vectorial, ChromaDB, SQLite event store, historial de chat, branching, búsqueda semántica, lectura/escritura de archivos JSON, escritura atómica, o persistencia de datos.
 
-Contenido: `chroma_store.py` (ChromaStore), `io.py`.
+Contenido: `chat_store.py` (ChatStore — SQLite event store con branching), `chroma_store.py` (ChromaStore — solo memorias semánticas), `io.py`.
 
 ## Flujo de Decisión para Agentes
 

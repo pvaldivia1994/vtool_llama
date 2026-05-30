@@ -52,8 +52,8 @@ def _register_default_slash_commands(self: VToolLlama) -> None:
         "Muestra la lista de comandos disponibles.",
     )
     self._slash_commands.register(
-        "scene_view", lambda _: "Comando procesado por el motor interno.",
-        "Obliga al personaje a describir la escena actual, el entorno y sus acciones en detalle inmersivo.",
+        "scene_view", self._cmd_scene_view,
+        "Describe la escena actual basándose en los últimos mensajes de la conversación.",
     )
     self._slash_commands.register(
         "save_episode", self._cmd_save_episode,
@@ -61,7 +61,12 @@ def _register_default_slash_commands(self: VToolLlama) -> None:
     )
     self._slash_commands.register(
         "episodes", self._cmd_episodes,
-        "Lista todos los episodios guardados. Uso: /episodes [load N | delete N]",
+        "Gestiona episodios guardados.",
+        sub={
+            "": "Listar episodios",
+            "load N": "Restaurar episodio N (checkout no destructivo)",
+            "delete N": "Eliminar episodio N",
+        },
     )
     self._slash_commands.register(
         "history", self._cmd_history,
@@ -73,11 +78,46 @@ def _register_default_slash_commands(self: VToolLlama) -> None:
     )
     self._slash_commands.register(
         "semantic", self._cmd_semantic,
-        "Indexa la conversación en ChromaDB. Uso: /semantic [rebuild]",
+        "Indexa la conversación en ChromaDB.",
+        sub={
+            "": "Indexado incremental",
+            "rebuild": "Reconstruir índice completo",
+        },
     )
     self._slash_commands.register(
         "clean", self._cmd_clean,
         "Limpia todo el historial de chat de la sesión actual.",
+    )
+    self._slash_commands.register(
+        "config", self._cmd_config,
+        "Muestra la configuración actual del modelo y el personaje.",
+    )
+    self._slash_commands.register(
+        "tick", self._cmd_tick,
+        "El personaje actúa según el contexto actual sin intervención del usuario.",
+    )
+    self._slash_commands.register(
+        "resume", self._cmd_resume,
+        "Genera un resumen de toda la conversación y lo guarda como episodio.",
+    )
+    self._slash_commands.register(
+        "context", self._cmd_context,
+        "Gestiona el contexto inyectable del personaje.",
+        sub={
+            "character <texto>": "Agregar estado emocional/mental/físico",
+            "thoughts <texto>": "Agregar pensamientos internos",
+            "goals <texto>": "Agregar objetivos activos",
+            "time <texto>": "Agregar momento del día/clima",
+            "world <texto>": "Agregar eventos del entorno",
+            "memory <texto>": "Agregar hechos importantes",
+            "scene <texto>": "Agregar descripción de escena",
+            "player <texto>": "Agregar acción del jugador (el character reacciona a esto)",
+            "custom <texto>": "Agregar contexto personalizado",
+            "list": "Listar entradas activas",
+            "rm <id>": "Eliminar entrada por ID",
+            "clear": "Limpiar todas las entradas",
+            "debug": "Mostrar bloque exacto que se inyecta",
+        },
     )
 
 VToolLlama._register_default_slash_commands = _register_default_slash_commands
@@ -172,6 +212,12 @@ VToolLlama._cmd_rel = _cmd_rel
 
 
 def _cmd_help(self: VToolLlama, args: str) -> str:
+    query = args.strip()
+    if query:
+        cmds = self._slash_commands.list_commands()
+        if query in cmds:
+            return f"/{query} — {cmds[query]}"
+        return f"Comando '{query}' no encontrado. Usá /help para ver todos."
     return self._slash_commands.get_help_text()
 
 VToolLlama._cmd_help = _cmd_help
@@ -185,6 +231,113 @@ def _cmd_save_episode(self: VToolLlama, args: str) -> str:
         return f"Error al guardar episodio: {e}"
 
 VToolLlama._cmd_save_episode = _cmd_save_episode
+
+
+def _cmd_scene_view(self: VToolLlama, args: str) -> str:
+    if not self._model_manager.is_loaded:
+        return "No hay modelo cargado."
+
+    history = self.get_chat_history(limit=15)
+    if not history:
+        return "No hay historial de chat para describir la escena."
+
+    lines = []
+    for msg in history:
+        if msg["role"] == "user":
+            lines.append(f"Usuario: {msg['content']}")
+        elif msg["role"] == "assistant":
+            name = self._character_manager.character_name or "Personaje"
+            lines.append(f"{name}: {msg['content']}")
+
+    conversation = "\n".join(lines)
+    query = args.strip()
+
+    if query:
+        prompt = (
+            "Analiza toda la conversación, pero da prioridad absoluta a los eventos "
+            "más recientes para determinar el estado actual de la historia.\n\n"
+
+            "Si información antigua contradice información reciente, considera válida "
+            "la información más reciente.\n\n"
+
+            "Respondé únicamente a la consulta utilizando el estado actual de la escena.\n\n"
+
+            "Reglas:\n"
+            "- Basate únicamente en información presente en la conversación.\n"
+            "- No inventes hechos, pensamientos, emociones, objetos o personajes.\n"
+            "- Si la información no existe o no puede inferirse razonablemente, indicá que no está claro.\n"
+            "- Ignorá elementos que ya no formen parte de la escena actual.\n"
+            "- Priorizá siempre los eventos más recientes.\n"
+            "- Respondé de forma directa.\n"
+            "- Máximo un párrafo.\n"
+            "- No hagas resúmenes de la historia.\n"
+            "- No agregues explicaciones sobre tu razonamiento.\n\n"
+
+            f"CONSULTA:\n{query}\n\n"
+            f"CONVERSACIÓN:\n{conversation}"
+        )
+
+        prefix = f"**{query}:** "
+
+    else:
+        prompt = (
+            "Reconstruí únicamente la escena actual utilizando toda la conversación.\n\n"
+
+            "Los eventos más recientes tienen prioridad absoluta.\n"
+            "Si algo ocurrió anteriormente pero ya no forma parte de la situación actual, no lo menciones.\n\n"
+
+            "Describí únicamente:\n"
+            "- Qué está ocurriendo ahora.\n"
+            "- Quiénes están presentes ahora.\n"
+            "- Dónde se desarrolla la escena si es conocido.\n"
+            "- Información relevante que siga vigente en este momento.\n\n"
+
+            "Reglas:\n"
+            "- Usá únicamente información presente en la conversación.\n"
+            "- No inventes detalles.\n"
+            "- No inventes emociones, sonidos, olores, pensamientos o acciones.\n"
+            "- No agregues información implícita que no esté respaldada por el contexto.\n"
+            "- No hagas un resumen de toda la historia.\n"
+            "- Concentrate exclusivamente en el estado actual de la escena.\n"
+            "- Respondé en un único párrafo.\n"
+            "- Sé directo, concreto y objetivo.\n"
+            "- Máximo 100 palabras.\n"
+            "- No uses listas ni encabezados.\n\n"
+
+            f"CONVERSACIÓN:\n{conversation}"
+        )
+
+        prefix = ""
+
+    try:
+        result = self._model_manager.generate(
+            messages=[{"role": "user", "content": prompt}],
+            stream=False,
+            max_tokens=512,
+            temperature=0.7,
+        )
+        respuesta = result["choices"][0]["message"].get("content", "").strip()
+        output = f"{prefix}{respuesta}" if prefix else respuesta
+
+        # Guardar escena vía orquestador
+        if not query and self._chat_store and self._memory._conversation_id:
+            from ..orquestador import ContextInjector
+            injector = ContextInjector(
+                self._chat_store,
+                self._memory._conversation_id,
+                self._memory._branch_id,
+            )
+            injector.save_scene(respuesta)
+            self._character_manager._prompt_dirty = True
+            self._log_debug("SCENE", "Nueva escena guardada en SQLite.")
+            if self._config.inject_scene_context:
+                output += "\n\n(La escena se inyectará en el contexto del próximo mensaje.)"
+
+        return output
+    except Exception as e:
+        return f"Error: {e}"
+
+VToolLlama._cmd_scene_view = _cmd_scene_view
 
 
 def _cmd_episodes(self: VToolLlama, args: str) -> str:
@@ -238,15 +391,15 @@ def _cmd_history(self: VToolLlama, args: str) -> str:
     except ValueError:
         n = 10
 
-    history = self.get_chat_history(limit=n)
+    history = self.get_chat_history(limit=n, include_context=True)
     if not history:
         return "No hay historial de chat."
 
     lines = [f"📜 Últimos {len(history)} mensajes:"]
     for msg in history:
-        role = "👤" if msg["role"] == "user" else "🤖" if msg["role"] == "assistant" else "🔧"
+        role_icon = "👤" if msg["role"] == "user" else "🤖" if msg["role"] == "assistant" else "📌"
         content = msg["content"][:120] + "…" if len(msg["content"]) > 120 else msg["content"]
-        lines.append(f"  {role} {content}")
+        lines.append(f"  {role_icon} {content}")
     return "\n".join(lines)
 
 VToolLlama._cmd_history = _cmd_history
@@ -313,3 +466,248 @@ def _cmd_clean(self: VToolLlama, args: str) -> str:
     return "🧹 Memoria limpiada completamente."
 
 VToolLlama._cmd_clean = _cmd_clean
+
+
+def _cmd_config(self: VToolLlama, args: str) -> str:
+    import json
+    from dataclasses import asdict
+
+    base = asdict(self._config_manager.get())
+
+    if self._character_manager.is_loaded and self._character_manager._char_dir:
+        char_config_path = self._character_manager._char_dir / "config.json"
+        if char_config_path.exists():
+            with open(char_config_path, "r", encoding="utf-8") as f:
+                overrides = json.load(f)
+        else:
+            overrides = {}
+    else:
+        overrides = {}
+
+    actual = asdict(self._config)
+
+    lines = [f"Personaje: {self._character_manager.character_name if self._character_manager.is_loaded else 'Ninguno'}"]
+
+    if self._model_manager.is_loaded:
+        info = self._model_manager.get_model_info()
+        lines.append(f"Modelo: {info.get('model_name', '?')}")
+        lines.append(f"Contexto: {info.get('context_size', 0)} tokens")
+
+    lines.append("")
+    lines.append("── Configuración activa ──")
+
+    # Mostrar solo campos relevantes
+    relevant = ["temperature", "top_p", "top_k", "repeat_penalty", "max_tokens",
+                "n_ctx", "n_batch", "gpu_layers", "threads", "flash_attn",
+                "debug", "chat_memory_limit", "auto_summary_interval",
+                "semantic_memory_enabled", "disable_thinking", "system_prompt"]
+
+    for key in relevant:
+        if key in actual:
+            val = actual[key]
+            override = " ⬅ personaje" if key in overrides else ""
+            lines.append(f"  {key}: {val}{override}")
+
+    return "\n".join(lines)
+
+VToolLlama._cmd_config = _cmd_config
+
+
+def _cmd_context(self: VToolLlama, args: str) -> str:
+    from ..orquestador import ContextInjector, CONTEXT_TYPES
+
+    # Scene se crea manualmente o via /scene_view
+    user_types = dict(CONTEXT_TYPES)  # incluye scene
+
+    if not self._chat_store or not self._memory._conversation_id:
+        return "No hay personaje cargado."
+
+    injector = ContextInjector(
+        self._chat_store,
+        self._memory._conversation_id,
+        self._memory._branch_id,
+    )
+    parts = args.strip().split(maxsplit=1) if args.strip() else []
+    cmd = parts[0].lower() if parts else ""
+    rest = parts[1] if len(parts) > 1 else ""
+
+    if cmd == "debug":
+        contexts = injector.get_active_contexts()
+        if not contexts:
+            return "No hay entradas de contexto activas."
+        lines = ["🧠 Bloque exacto que se inyecta en el prompt:\n"]
+        for ctx in contexts:
+            lines.append(f"  system: {ctx}")
+        lines.append(f"\nTotal: {len(contexts)} entradas activas.")
+        return "\n".join(lines)
+
+    if cmd == "list":
+        entries = injector.list()
+        if not entries:
+            return "No hay entradas de contexto."
+        lines = ["📋 Contexto inyectable:"]
+        for e in entries:
+            lines.append(f"  #{e.id} {e.tag} {e.content[:80]}")
+        return "\n".join(lines)
+
+    if cmd == "rm":
+        try:
+            eid = int(rest.strip())
+            ok = injector.remove(eid)
+            self._character_manager._prompt_dirty = True
+            return f"✓ Entrada #{eid} eliminada." if ok else f"Entrada #{eid} no encontrada."
+        except (ValueError, IndexError):
+            return "Uso: /context rm <id>"
+
+    if cmd == "clear":
+        n = injector.clear()
+        self._character_manager._prompt_dirty = True
+        return f"✓ {n} entradas de contexto eliminadas."
+
+    if cmd in user_types:
+        if not rest:
+            from ..orquestador import CONTEXT_DEFINITIONS
+            definicion = CONTEXT_DEFINITIONS.get(cmd, "")
+            tag = injector.tag_for_type(cmd)
+            if definicion:
+                return f"{tag} — {definicion}"
+            return f"{tag} Sin descripción disponible."
+        cid = injector.add(cmd, rest)
+        self._character_manager._prompt_dirty = True
+        tag = injector.tag_for_type(cmd)
+        return f"✓ {tag} {rest}\n(Entrada #{cid} — se inyectará en el próximo chat.)"
+
+    tipos = ", ".join(user_types.keys())
+    return (
+        "Uso: /context <tipo> <texto>\n"
+        f"Tipos: {tipos}\n\n"
+        "  /context list              — listar entradas\n"
+        "  /context rm <id>           — eliminar entrada\n"
+        "  /context clear             — limpiar todo\n"
+        "  /context debug             — mostrar bloque exacto que se inyecta\n\n"
+        "Ejemplos:\n"
+        "  /context character Está triste\n"
+        "  /context time Es un nuevo día\n"
+        "  /context thoughts Piensa en su pasado\n"
+        "  /context world Llueve en la ciudad"
+    )
+
+VToolLlama._cmd_context = _cmd_context
+
+
+def _cmd_tick(self: VToolLlama, args: str) -> str:
+    """El personaje actúa según el contexto actual sin mensaje del usuario."""
+    if not self._model_manager.is_loaded:
+        return "No hay modelo cargado."
+    if not self._memory._conversation_id:
+        return "No hay personaje cargado."
+
+    messages = self._memory.get_context_messages()
+
+    # Agregar contexto activo al prompt actual
+    from ..orquestador import ContextInjector
+    if self._chat_store and self._memory._conversation_id:
+        inj = ContextInjector(self._chat_store, self._memory._conversation_id, self._memory._branch_id)
+
+        prompt_extra = args.strip()
+        if prompt_extra:
+            inj.add("player", prompt_extra)
+
+        active = inj.get_active_contexts()
+        for ctx in active:
+            messages.append({"role": "system", "content": ctx})
+
+    messages.append({"role": "user", "content": "[CONTINUE]"})
+
+    try:
+        result = self._model_manager.generate(
+            messages=messages,
+            stream=False,
+            max_tokens=512,
+            temperature=0.8,
+        )
+        response = result["choices"][0]["message"].get("content", "").strip()
+        if not response:
+            return "El personaje no respondió."
+
+        self._memory.add_assistant_message(response)
+
+        from ..orquestador import ContextInjector
+        if self._chat_store and self._memory._conversation_id:
+            injector = ContextInjector(
+                self._chat_store,
+                self._memory._conversation_id,
+                self._memory._branch_id,
+            )
+            active = injector.list(only_active=True)
+            if active:
+                injector.mark_delivered([e.id for e in active])
+
+        return response
+    except Exception as e:
+        return f"Error: {e}"
+
+VToolLlama._cmd_tick = _cmd_tick
+
+
+def _cmd_resume(self: VToolLlama, args: str) -> str:
+    """Genera un resumen de toda la conversación y lo guarda como episodio."""
+    if not self._model_manager.is_loaded:
+        return "No hay modelo cargado."
+    if not self._chat_store or not self._memory._conversation_id:
+        return "No hay personaje cargado."
+
+    history = self.get_chat_history(limit=100, include_context=False)
+    if not history:
+        return "No hay historial para resumir."
+
+    lines = []
+    for msg in history:
+        if msg["role"] == "user":
+            lines.append(f"Usuario: {msg['content']}")
+        elif msg["role"] == "assistant":
+            name = self._character_manager.character_name or "Personaje"
+            lines.append(f"{name}: {msg['content']}")
+
+    conversation = "\n".join(lines)
+
+    try:
+        result = self._model_manager.generate(
+            messages=[{
+                "role": "system",
+                "content": (
+                    "Resumí toda la conversación en un párrafo. "
+                    "Incluí los eventos importantes, cambios emocionales, "
+                    "decisiones clave y el estado actual de la historia. "
+                    "Sé objetivo y conciso. Máximo 4 oraciones."
+                ),
+            }, {
+                "role": "user",
+                "content": f"CONVERSACIÓN:\n{conversation}",
+            }],
+            stream=False,
+            max_tokens=256,
+            temperature=0.3,
+        )
+        resume = result["choices"][0]["message"].get("content", "").strip()
+        if not resume:
+            return "No se pudo generar el resumen."
+
+        # Guardar como episodio en SQLite
+        last_id = history[-1]["id"] if history else 0
+        conv = self._chat_store.get_conversation(self._memory._conversation_id)
+        self._chat_store.add_summary(
+            conversation_id=self._memory._conversation_id,
+            branch_id=self._memory._branch_id,
+            start_message_id=history[0]["id"] if history else 0,
+            end_message_id=last_id,
+            summary=resume,
+            reason="manual",
+        )
+        self._log_debug("EPISODE", "Resumen guardado como episodio.")
+        return f"📝 Resumen guardado:\n\n{resume}"
+
+    except Exception as e:
+        return f"Error generando resumen: {e}"
+
+VToolLlama._cmd_resume = _cmd_resume

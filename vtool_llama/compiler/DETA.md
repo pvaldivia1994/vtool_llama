@@ -7,22 +7,26 @@ El CharacterCompiler ensambla el system prompt final que recibe el LLM combinand
 ```
 compile_prompt()
   └── base_system_prompt (desde config.json)
-  ├── 1. [SYSTEM CORE]            ← yaml_loader (system_core.yaml)
-  ├── 2. [ANTI-ASSISTANT]         ← yaml_loader (anti_assistant_layer.yaml)
-  ├── 3. [IDENTIDAD]              ← dna_layers._resolve_identity()
-  ├── 4. [SOUL SYSTEM]            ← dna_layers._resolve_soul()
-  ├── 5. [RASGOS]                 ← dna_layers._resolve_traits()  (mod override)
-  ├── 6. [CREENCIAS Y CONTRADICCIONES] ← dna_layers._resolve_beliefs_contradictions()
-  ├── 7. [EMOTIONAL TRIGGERS]     ← dna_layers._resolve_emotional_triggers()
-  ├── 8. [MOTIVACIONES]           ← dna_layers._resolve_motivations()
-  ├── 9. [CONFLICTO INTERNO]      ← dna_layers._resolve_inner_conflict()
-  ├── 10. [ESTADO EMOCIONAL]      ← dna_layers._resolve_state()  (mod override)
-  ├── 11. [RELACIÓN]              ← dna_layers._resolve_relationship()
-  ├── 12. [ESTILO DE HABLA]       ← dna_layers._resolve_speech()  (mod override)
-  ├── 13. [PATRONES DE HABLA]     ← dna_layers._resolve_speech_patterns()
-  ├── 14-15. [CORE/HARD RULES]    ← constantes + dna_layers
-  ├── 16-26. capas complementarias ← dna_layers (mods, memoria, episodios, psicología, persona, flaws, roleplay)
-  └── 27. [MODO ROLEPLAY]         ← dna_layers._resolve_roleplay_mode()
+  ├── 1. [SYSTEM CORE]              ← yaml_loader (system_core.yaml)
+  ├── 2. [ANTI-ASSISTANT]           ← yaml_loader (anti_assistant.yaml)
+  ├── 3. [IDENTITY]                 ← 1_identity.md (template)
+  ├── 4. [TRAITS]                   ← 2_traits.md (template)
+  ├── 5. [MOTIVATIONS]              ← 3_motivations.md (template)
+  ├── 6. [FLAWS]                    ← 4_flaws.md (template)
+  ├── 7. [SPEECH STYLE]             ← 5_speech.md (template)
+  ├── 8. [INNER CONFLICT]           ← 6_inner_conflict.md (template)
+  ├── 9. [EMOTIONAL TRIGGERS]       ← 7_emotional_triggers.md (template)
+  ├── 10. [SPEECH PATTERNS]         ← 8_speech_patterns.md (template)
+  ├── 11. [CORE RULES]              ← 9_core_rules.md (template)
+  ├── 12. [HARD RULES]              ← 10_never_do.md (template)
+  ├── 13. [EMOTIONAL STATE]         ← 11_state.md (template)
+  ├── 14. [RELATIONSHIP]            ← 13_relationship.md (template)
+  ├── 15. [WORLD]                   ← 15_scenario.md (template)
+  ├── 16. [RESPONSE STYLE]          ← 16_response_style.md (template)
+  ├── 17. [FEW SHOT EXAMPLES]       ← 14_few_shot.md (template)
+  ├── 18. [ROLEPLAY MODE]           ← roleplay_mode.yaml (por personaje)
+  ├── soul, beliefs, psych, persona, mods, memory, episode ← dinámicos (sin template)
+  └── 19. [SECTION REFERENCE]       ← 12_definitions.md (guía de secciones)
 ```
 
 ## Archivos del Subpackage
@@ -32,22 +36,20 @@ Barrel. Exporta `CharacterCompiler`.
 
 ### `compiler.py` — Clase Base
 
-Define `CharacterCompiler` y la API pública. Contiene las constantes `CORE_RULES_BLOCK` y `NEVER_DO_BLOCK`.
+Define `CharacterCompiler` y la API pública. Contiene `_resolve_definitions()` que carga `12_definitions.md`.
 
 | Método | Rol |
 |--------|-----|
-| `compile_prompt(base, config)` | Pipeline completo de 27 capas |
-| `compile_base_prompt(base, config)` | Solo SYSTEM CORE + ANTI-ASSISTANT + DNA (para KV Cache Base) |
-| `compile_base_soul_prompt(base, config)` | Base + Soul (para KV Cache Base Soul) |
+| `compile_prompt(base, config)` | Pipeline completo de capas (DNA templates + YAML + dinámicas) |
+| `_resolve_definitions()` | Carga `config/prompts/12_definitions.md` como guía de secciones |
 | `_try_add(parts, block)` | Agrega bloque si no está vacío |
-| `_get_soul_data()` | Retorna `_soul_data` del SoulAccessor si está activo |
 
 **Pipeline** (`compile_prompt`):
-1. Capas fundacionales (YAML): SYSTEM CORE + ANTI-ASSISTANT
-2. DNA: identidad, alma, rasgos, creencias, triggers, motivaciones, conflicto
-3. Estado runtime: emoción, relación, habla, patrones
-4. Reglas (CORE + NEVER DO + personalizadas)
-5. Capas complementarias: estilo, escenario, few-shot, mods, memoria, episodios, psicología, persona, flaws, roleplay
+1. YAML por personaje: `system_core.yaml`, `anti_assistant.yaml`
+2. Templates `.md` numerados desde `config/prompts/`: identity, traits, motivations, flaws, speech, etc.
+3. Capas dinámicas: soul, beliefs, psychology, persona, memory, episode, active_mods
+4. YAML por personaje: `roleplay_mode.yaml`
+5. `12_definitions.md` como guía final de secciones
 
 ### `yaml_loader.py` — Carga de YAML
 
@@ -56,41 +58,35 @@ Métodos asignados a `CharacterCompiler` para cargar prompts desde archivos YAML
 | Método | Rol |
 |--------|-----|
 | `_load_yaml_prompt(filename)` | Busca `char_dir/filename` → `default/filename` → string vacío |
-| `_resolve_system_core()` | `system_core.yaml` o fallback hardcodeado (~50 LOC) |
-| `_resolve_anti_assistant()` | `anti_assistant_layer.yaml` o fallback hardcodeado (~70 LOC) |
 
-**Resolución de YAML**: busca primero en `char_dir/<filename>`, luego en `default/<filename>`. Si no existe ningún YAML, usa el bloque hardcodeado.
+**Resolución de YAML**: busca primero en `char_dir/<filename>`, luego en `default/<filename>`.
+
+**Archivos YAML por personaje:** `system_core.yaml`, `anti_assistant.yaml`, `roleplay_mode.yaml`
 
 ### `dna_layers.py` — Capas de Resolución
 
-Todos los métodos `_resolve_*` que generan cada bloque del prompt. ~22 métodos cortos (5-20 LOC cada uno).
+Incluye `_render_template()` que carga templates `.md` numerados desde `config/prompts/`. Cada template usa placeholders `#PLACEHOLDER`, items `#ITEMS`, y bloques condicionales `#HAS_X.../HAS_X`.
 
-| Método | Genera el bloque | Soporta mod override |
-|--------|-----------------|---------------------|
-| `_get_mod_override(target)` | Busca mod activo para una capa | — |
-| `_resolve_identity()` | `[IDENTIDAD]` | No |
-| `_resolve_traits()` | `[RASGOS]` | **Sí** (traits) |
-| `_resolve_motivations()` | `[MOTIVACIONES]` | No |
-| `_resolve_flaws()` | `[DEFECTOS]` | No |
-| `_resolve_speech()` | `[ESTILO DE HABLA]` | **Sí** (speech) |
-| `_resolve_few_shot_examples()` | `[FEW SHOT EXAMPLES]` | No |
-| `_resolve_scenario()` | `[MUNDO / ESCENARIO]` | No |
-| `_resolve_response_style()` | `[ESTILO DE RESPUESTA]` | No |
-| `_resolve_inner_conflict()` | `[CONFLICTO INTERNO]` | No |
-| `_resolve_emotional_triggers()` | `[EMOTIONAL TRIGGERS]` | No |
-| `_resolve_speech_patterns()` | `[PATRONES DE HABLA]` | No |
-| `_resolve_roleplay_mode()` | `[MODO ROLEPLAY]` | No |
-| `_resolve_dna()` | Compila todas las capas DNA para KV Cache | No |
-| `_resolve_core_rules()` | Reglas adicionales del `rules.json` | No |
-| `_resolve_never_do()` | Restricciones del `rules.json` | No |
-| `_resolve_beliefs_contradictions()` | `[CREENCIAS Y CONTRADICCIONES]` desde alma | No |
-| `_resolve_soul()` | `[SOUL SYSTEM]` bloque psicológico | No |
-| `_resolve_state()` | `[ESTADO EMOCIONAL]` | **Sí** (emotion) |
-| `_resolve_relationship()` | `[RELACIÓN CON EL USUARIO]` | No |
-| `_resolve_active_mods_description()` | `[MODIFICADORES ACTIVOS]` | No |
-| `_resolve_memory()` | `[MEMORIA RELEVANTE]` | No |
-| `_resolve_episode()` | `[MEMORIA EPISÓDICA]` | No |
-| `_resolve_psychology()` | `[PSYCHOLOGY STATE]` | No |
+| Método | Genera el bloque | Template |
+|--------|-----------------|----------|
+| `_resolve_identity()` | `[IDENTITY]` | `1_identity.md` |
+| `_resolve_traits()` | `[TRAITS]` | `2_traits.md` |
+| `_resolve_motivations()` | `[MOTIVATIONS]` | `3_motivations.md` |
+| `_resolve_flaws()` | `[FLAWS]` | `4_flaws.md` |
+| `_resolve_speech()` | `[SPEECH STYLE]` | `5_speech.md` |
+| `_resolve_few_shot_examples()` | `[FEW SHOT EXAMPLES]` | `14_few_shot.md` |
+| `_resolve_scenario()` | `[WORLD]` | `15_scenario.md` |
+| `_resolve_response_style()` | `[RESPONSE STYLE]` | `16_response_style.md` |
+| `_resolve_inner_conflict()` | `[INNER CONFLICT]` | `6_inner_conflict.md` |
+| `_resolve_emotional_triggers()` | `[EMOTIONAL TRIGGERS]` | `7_emotional_triggers.md` |
+| `_resolve_speech_patterns()` | `[SPEECH PATTERNS]` | `8_speech_patterns.md` |
+| `_resolve_core_rules()` | `[CORE RULES]` | `9_core_rules.md` |
+| `_resolve_never_do()` | `[HARD RULES]` | `10_never_do.md` |
+| `_resolve_state()` | `[EMOTIONAL STATE]` | `11_state.md` |
+| `_resolve_relationship()` | `[RELATIONSHIP]` | `13_relationship.md` |
+| `_resolve_roleplay_mode()` | `[ROLEPLAY MODE]` | `roleplay_mode.yaml` por personaje |
+| `_resolve_dna()` | Compila todas las capas DNA | — |
+| `_resolve_beliefs_contradictions()`, `_resolve_soul()`, `_resolve_psychology()`, `_resolve_persona()`, `_resolve_active_mods_description()`, `_resolve_memory()`, `_resolve_episode()` | Capas dinámicas (sin template) | — |
 | `_resolve_persona()` | `[EXPRESSION STATE]` | No |
 
 ## Sistema de Resolución de Conflictos

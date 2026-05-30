@@ -76,11 +76,11 @@ for token in llm.stream_chat("Explícame Python"):
 
 ## Arquitectura
 
-La librería está organizada en **9 subpackages** por dominio, cada uno con su propia documentación:
+La librería está organizada en **10 subpackages** por dominio, cada uno con su propia documentación:
 
 | Subpackage | Propósito | Documentación |
 |-----------|-----------|---------------|
-| `engine/` | Núcleo: VToolLlama, chat, streaming, configuración, logging | `engine/AGENT.md` |
+| `engine/` | Núcleo: VToolLlama, chat, streaming, configuración, logging, ContextBuilder | `engine/AGENT.md` |
 | `model/` | ModelManager: carga, inferencia, GPU, KV Cache | `model/AGENT.md` |
 | `soul/` | Soul System: generación de vida simulada | `soul/AGENT.md` |
 | `psychology/` | Psychology Engine v2: psicología runtime emergente | `psychology/AGENT.md` |
@@ -88,7 +88,8 @@ La librería está organizada en **9 subpackages** por dominio, cada uno con su 
 | `compiler/` | CharacterCompiler: ensamblado del system prompt | `compiler/AGENT.md` |
 | `tools/` | Tool system: function calling, parseo, ejecución | `tools/AGENT.md` |
 | `types/` | Dataclasses compartidas por dominio | `types/AGENT.md` |
-| `db/` | ChromaDB wrapper + file I/O utilities | `db/AGENT.md` |
+| `db/` | ChatStore (SQLite event store) + ChromaDB wrapper + file I/O | `db/AGENT.md` |
+| `utils/` | Utilidades: TokenCounter centralizado | `utils/AGENT.md` |
 
 ### Pipeline psicológico (v0.3.0)
 

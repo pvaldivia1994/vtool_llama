@@ -35,26 +35,10 @@ _MEMORY_TRIGGERS = (
     "don't forget", "keep in mind",
 )
 
-_SCENE_TRIGGERS = (
-    "describe la escena", "describe el entorno",
-    "donde estas", "donde estoy",
-    "que ves", "que veo",
-    "que esta pasando", "que pasa a mi alrededor",
-    "como es el lugar", "como es este lugar",
-    "/scene_view", "describe the scene",
-)
-
-
 def has_memory_trigger(text: str) -> bool:
     """Detecta si el texto del usuario pide guardar un recuerdo."""
     lower = text.lower()
     return any(t in lower for t in _MEMORY_TRIGGERS)
-
-
-def has_scene_trigger(text: str) -> bool:
-    """Detecta si el texto del usuario pide describir la escena."""
-    lower = text.lower()
-    return any(t in lower for t in _SCENE_TRIGGERS)
 
 
 # ============================================================
@@ -92,21 +76,18 @@ class ToolExecutionManager:
         scene_prompt: str,
         user_tools: Optional[list[dict]] = None,
     ) -> dict:
-        """
-        Procesa tool_calls del formato OpenAI estructurado.
+        """Procesa tool_calls estructurados (OpenAI format).
 
         Returns:
             dict con:
-              - internal_found: bool (si se ejecuto una tool interna)
-              - memory_saved: bool (si se guardo memoria)
-              - external_calls: list (tool calls externas validadas)
-              - scene_prompt: str|None (si se solicito escena)
+              - internal_found: bool
+              - memory_saved: bool
+              - external_calls: list[dict]
         """
-        result = {
+        result: dict[str, Any] = {
             "internal_found": False,
             "memory_saved": False,
             "external_calls": [],
-            "scene_prompt": None,
         }
 
         for tc in tool_calls:
@@ -216,7 +197,7 @@ class ToolExecutionManager:
         if had_tool_calls or had_text_tools:
             return False
 
-        return has_memory_trigger(user_prompt) or has_scene_trigger(user_prompt)
+        return has_memory_trigger(user_prompt)
 
     def build_coercion_prompt(self, user_prompt: str) -> str:
         """
@@ -229,13 +210,6 @@ class ToolExecutionManager:
                 "SYSTEM OVERRIDE: The user asked you to remember something. "
                 "You MUST call store_long_term_memory now. "
                 "Analyze what they said and extract the key information. "
-                "Respond with the tool call only."
-            )
-
-        if has_scene_trigger(user_prompt):
-            return (
-                "SYSTEM OVERRIDE: The user asked you to describe the scene. "
-                "You MUST call get_scene_state now. "
                 "Respond with the tool call only."
             )
 

@@ -8,12 +8,35 @@ from .base import VToolLlama
 from ..exceptions import EmptyPromptError, InferenceError, ModelNotLoadedError
 from ..tools import (
     INTERNAL_TOOLS,
-    SCENE_SYSTEM_COMMAND,
     StreamPostProcessor,
     execute_text_tool,
 )
 
-VToolLlama._scene_requested = False
+
+def _extract_inline_context(self: VToolLlama, prompt: str) -> str:
+    """Extrae [context <tipo> <texto>] del prompt, guarda la entrada
+    y retorna el prompt limpio."""
+    import re
+    from ..orquestador import CONTEXT_TYPES, ContextInjector
+
+    if not self._chat_store or not self._memory._conversation_id:
+        return prompt
+
+    pattern = r'\[context\s+(\w+)\s+(.*?)\]'
+    cleaned = prompt
+    injector = ContextInjector(self._chat_store, self._memory._conversation_id, self._memory._branch_id)
+
+    for match in re.finditer(pattern, prompt, re.IGNORECASE):
+        ctx_type = match.group(1).lower()
+        content = match.group(2).strip()
+        if ctx_type in CONTEXT_TYPES and content:
+            injector.add(ctx_type, content)
+            self._log_debug("CTX", f"Inline context [{ctx_type}]: {content[:50]}")
+        cleaned = cleaned.replace(match.group(0), "", 1)
+
+    return cleaned.strip()
+
+VToolLlama._extract_inline_context = _extract_inline_context
 
 
 def add_tool_message(self: VToolLlama, content: str, tool_call_id: str) -> None:
@@ -109,6 +132,49 @@ def _inject_chat_memory_into_messages(
 VToolLlama._inject_chat_memory_into_messages = _inject_chat_memory_into_messages
 
 
+def _inject_scene_context(self: VToolLlama, messages: list[dict]) -> list[dict]:
+    """Si inject_scene_context está activo, genera una descripción de escena
+    basada en los últimos mensajes y la inyecta como contexto system."""
+    if not self._config.inject_scene_context or not self._chat_store:
+        return messages
+
+    history = self.get_chat_history(limit=10)
+    if not history:
+        return messages
+
+    lines = []
+    for msg in history:
+        if msg["role"] == "user":
+            lines.append(f"Usuario: {msg['content']}")
+        elif msg["role"] == "assistant":
+            name = self._character_manager.character_name or "Personaje"
+            lines.append(f"{name}: {msg['content']}")
+    conversation = "\n".join(lines)
+
+    try:
+        result = self._model_manager.generate(
+            messages=[{
+                "role": "user",
+                "content": (
+                    "Resumí en 2-3 oraciones la escena actual según esta "
+                    "conversación. Solo los hechos, sin florituras.\n\n"
+                    f"{conversation}"
+                ),
+            }],
+            stream=False, max_tokens=200, temperature=0.3,
+        )
+        scene = result["choices"][0]["message"].get("content", "").strip()
+        if scene:
+            self._log_debug("SCENE", f"Contexto de escena inyectado: {scene[:60]}...")
+            messages.append({"role": "system", "content": f"[ESCENA ACTUAL] {scene}"})
+    except Exception:
+        pass
+
+    return messages
+
+VToolLlama._inject_scene_context = _inject_scene_context
+
+
 def _apply_emotional_trigger(self: VToolLlama, prompt: str) -> None:
     psych_mgr = getattr(self._character_manager, '_psychology_manager', None)
     if not psych_mgr:
@@ -159,15 +225,11 @@ VToolLlama._psychology_tick = _psychology_tick
 
 
 def _on_stream_tool_detected(self: VToolLlama, fn_name: str, fn_args: dict) -> None:
-    if fn_name in ("store_long_term_memory", "remember_memory"):
-        execute_text_tool(
-            fn_name, fn_args,
-            add_memory_fn=self._character_manager.add_memory,
-            log_fn=self._log_info,
-        )
-    elif fn_name in ("get_scene_state", "describe_scene"):
-        self._log_debug("TOOL", "Scene state solicitada via stream interceptor")
-        self._scene_requested = True
+    execute_text_tool(
+        fn_name, fn_args,
+        add_memory_fn=self._character_manager.add_memory,
+        log_fn=self._log_info,
+    )
 
 VToolLlama._on_stream_tool_detected = _on_stream_tool_detected
 
@@ -188,12 +250,11 @@ def chat(
     internal_tools = list(INTERNAL_TOOLS)
     active_tools = (tools or []) + internal_tools
 
-    scene_prompt = SCENE_SYSTEM_COMMAND
-    if prompt.strip().lower() == "/scene_view":
-        prompt = scene_prompt
-        slash_result = None
-    else:
-        slash_result = self._handle_slash_command(prompt)
+    # Extraer context inline [context tipo texto]
+    prompt = self._extract_inline_context(prompt)
+
+    slash_result = self._handle_slash_command(prompt)
+    scene_prompt = ""
 
     if slash_result is not None:
         return slash_result
@@ -228,6 +289,7 @@ def chat(
 
             if loop_count == 1:
                 self._inject_soul_context_into_messages(messages, prompt)
+                # scene context injection moved to /scene_view command
 
             if system_injection and loop_count == 1:
                 if messages and messages[-1].get("role") == "user":
@@ -267,12 +329,6 @@ def chat(
                             self._memory.add_assistant_message(content=None, tool_calls=[tc])
                             self._memory.add_tool_message(
                                 content="Memoria guardada. Ahora respondele al usuario.",
-                                tool_call_id=tc.get("id", ""),
-                            )
-                        elif fn_name in ("get_scene_state", "describe_scene"):
-                            self._memory.add_assistant_message(content=None, tool_calls=[tc])
-                            self._memory.add_tool_message(
-                                content=scene_prompt,
                                 tool_call_id=tc.get("id", ""),
                             )
                     if handled["memory_saved"]:
@@ -334,6 +390,17 @@ def chat(
 
                 self._auto_save_if_needed()
 
+                # Marcar contexto como entregado
+                try:
+                    from ..orquestador import ContextInjector
+                    if self._chat_store and self._memory._conversation_id:
+                        inj = ContextInjector(self._chat_store, self._memory._conversation_id, self._memory._branch_id)
+                        active = inj.list(only_active=True)
+                        if active:
+                            inj.mark_delivered([e.id for e in active])
+                except Exception:
+                    pass
+
                 return response_text
 
             except ModelNotLoadedError:
@@ -359,13 +426,8 @@ def stream_chat(
 ) -> Generator[Any, None, None]:
     self._validate_prompt(prompt)
 
-    scene_prompt = SCENE_SYSTEM_COMMAND
-
-    if prompt.strip().lower() == "/scene_view":
-        prompt = scene_prompt
-        slash_result = None
-    else:
-        slash_result = self._handle_slash_command(prompt)
+    slash_result = self._handle_slash_command(prompt)
+    scene_prompt = ""
 
     if slash_result is not None:
         yield slash_result
@@ -402,6 +464,7 @@ def stream_chat(
 
             if loop_count == 1:
                 self._inject_soul_context_into_messages(messages, prompt)
+                # scene context injection moved to /scene_view command
 
             if system_injection and loop_count == 1:
                 if messages and messages[-1].get("role") == "user":
@@ -471,27 +534,12 @@ def stream_chat(
                             yield f"\n** {char_name} recordará esto **\n\n"
                             self._memory.add_assistant_message(content=None, tool_calls=[tc])
                             self._memory.add_tool_message(content="Memoria guardada. Continua tu respuesta.", tool_call_id=tc.get("id", ""))
-                        elif fn_name in ("get_scene_state", "describe_scene"):
-                            self._memory.add_assistant_message(content=None, tool_calls=[tc])
-                            self._memory.add_tool_message(
-                                content=scene_prompt,
-                                tool_call_id=tc.get("id", ""),
-                            )
                     continue
 
                 if handled["external_calls"]:
                     self._memory.add_assistant_message(content=full_response or None, tool_calls=handled["external_calls"])
                     yield {"choices": [{"message": {"tool_calls": handled["external_calls"]}}]}
                     return
-
-                if self._scene_requested:
-                    self._scene_requested = False
-                    self._memory.add_assistant_message(content=None)
-                    self._memory.add_tool_message(
-                        content=scene_prompt,
-                        tool_call_id="scene_stream",
-                    )
-                    continue
 
                 if not final_tool_calls:
                     text_handled = self._tool_manager.handle_text_calls(
@@ -515,6 +563,17 @@ def stream_chat(
 
                 self._log_generation_stats()
                 self._auto_save_if_needed()
+
+                # Marcar contexto como entregado
+                try:
+                    from ..orquestador import ContextInjector
+                    if self._chat_store and self._memory._conversation_id:
+                        inj = ContextInjector(self._chat_store, self._memory._conversation_id, self._memory._branch_id)
+                        active = inj.list(only_active=True)
+                        if active:
+                            inj.mark_delivered([e.id for e in active])
+                except Exception:
+                    pass
                 return
 
             except ModelNotLoadedError:
@@ -535,6 +594,11 @@ def chat_with_thinking(
     repeat_penalty: Optional[float] = None,
 ) -> tuple[str, str]:
     self._validate_prompt(prompt)
+
+    if self._config.disable_thinking:
+        content = self.chat(prompt, max_tokens=max_tokens, temperature=temperature,
+                            top_p=top_p, top_k=top_k, repeat_penalty=repeat_penalty)
+        return "", content
 
     with self._lock:
         self._memory.add_user_message(prompt)
@@ -572,6 +636,17 @@ def chat_with_thinking(
             self._log_generation_stats()
             self._auto_save_if_needed()
 
+            # Marcar contexto como entregado
+            try:
+                from ..orquestador import ContextInjector
+                if self._chat_store and self._memory._conversation_id:
+                    inj = ContextInjector(self._chat_store, self._memory._conversation_id, self._memory._branch_id)
+                    active = inj.list(only_active=True)
+                    if active:
+                        inj.mark_delivered([e.id for e in active])
+            except Exception:
+                pass
+
             return thinking, content
 
         except ModelNotLoadedError:
@@ -592,6 +667,12 @@ def stream_chat_with_thinking(
     repeat_penalty: Optional[float] = None,
 ) -> Generator[tuple[str, str], None, None]:
     self._validate_prompt(prompt)
+
+    if self._config.disable_thinking:
+        for token in self.stream_chat(prompt, max_tokens=max_tokens, temperature=temperature,
+                                      top_p=top_p, top_k=top_k, repeat_penalty=repeat_penalty):
+            yield ("content", token)
+        return
 
     with self._lock:
         self._memory.add_user_message(prompt)
@@ -679,6 +760,17 @@ def stream_chat_with_thinking(
             self._memory.add_assistant_message(full_response)
             self._log_generation_stats()
             self._auto_save_if_needed()
+
+            # Marcar contexto como entregado
+            try:
+                from ..orquestador import ContextInjector
+                if self._chat_store and self._memory._conversation_id:
+                    inj = ContextInjector(self._chat_store, self._memory._conversation_id, self._memory._branch_id)
+                    active = inj.list(only_active=True)
+                    if active:
+                        inj.mark_delivered([e.id for e in active])
+            except Exception:
+                pass
 
         except ModelNotLoadedError:
             raise

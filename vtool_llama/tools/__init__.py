@@ -19,7 +19,7 @@ from .parser import (
     execute_text_tool,
     is_internal_tool,
 )
-from .manager import ToolExecutionManager, has_memory_trigger, has_scene_trigger
+from .manager import ToolExecutionManager, has_memory_trigger
 from .stream_processor import StreamPostProcessor
 
 __all__ = [
@@ -34,6 +34,5 @@ __all__ = [
     "is_internal_tool",
     "ToolExecutionManager",
     "has_memory_trigger",
-    "has_scene_trigger",
     "StreamPostProcessor",
 ]

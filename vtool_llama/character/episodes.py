@@ -11,7 +11,7 @@ from ..types import EpisodeSnapshot
 def _load_latest_episode(self: CharacterManager) -> None:
     if not self._char_dir:
         return
-    episodes_dir = self._char_dir / "memory" / "episodes"
+    episodes_dir = self._char_dir / "_memory" / "episodes"
     if not episodes_dir.exists():
         self.current_episode = None
         return
@@ -38,7 +38,7 @@ def save_episode(self: CharacterManager, messages: list[dict], summary: str) -> 
     if not self._char_dir:
         raise RuntimeError("No hay personaje cargado.")
     with self._lock:
-        episodes_dir = self._char_dir / "memory" / "episodes"
+        episodes_dir = self._char_dir / "_memory" / "episodes"
         self._ensure_dir(episodes_dir)
 
         existing = sorted(episodes_dir.glob("episode_*.json"))
@@ -69,7 +69,7 @@ CharacterManager.save_episode = save_episode
 def list_episodes(self: CharacterManager) -> list[dict]:
     if not self._char_dir:
         return []
-    episodes_dir = self._char_dir / "memory" / "episodes"
+    episodes_dir = self._char_dir / "_memory" / "episodes"
     if not episodes_dir.exists():
         return []
 
@@ -93,7 +93,7 @@ def load_episode(self: CharacterManager, episode_id: int) -> None:
         raise RuntimeError("No hay personaje cargado.")
 
     filename = f"episode_{episode_id:03d}.json"
-    filepath = self._char_dir / "memory" / "episodes" / filename
+    filepath = self._char_dir / "_memory" / "episodes" / filename
     if not filepath.exists():
         raise ValueError(f"Episodio #{episode_id} no encontrado.")
 
@@ -119,7 +119,7 @@ def delete_episode(self: CharacterManager, episode_id: int) -> bool:
     if not self._char_dir:
         return False
     filename = f"episode_{episode_id:03d}.json"
-    filepath = self._char_dir / "memory" / "episodes" / filename
+    filepath = self._char_dir / "_memory" / "episodes" / filename
     if filepath.exists():
         filepath.unlink()
         self._log("EPISODE", f"Episodio #{episode_id} eliminado.")
