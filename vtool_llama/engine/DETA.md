@@ -10,6 +10,7 @@ engine/
 ├── base.py                # VToolLlama class + __init__ + modelo/config/props/logging
 ├── chat.py                # chat(), stream_chat(), chat_with_thinking(), stream_chat_with_thinking()
 ├── character.py           # load_character, create, soul, personality, warmup cache
+├── inline.py              # InlineProcessor: #, [], (), :, *, - comandos inline (v15)
 ├── memory.py              # clear/get/export/import memory, trim, episodios
 ├── slash_commands.py      # VToolLlama slash command handlers
 ├── slash_registry.py      # SlashCommandRegistry class
@@ -46,7 +47,7 @@ Define `VToolLlama`, la clase principal. Constructor inicializa todos los gestor
 | `semantic_saving` (property) | `True` si se está indexando en ChromaDB |
 | `loading` (property) | `True` si hay una carga de personaje en curso |
 | `get_tool_stats() → dict` | Métricas de tools del `ToolExecutionManager` |
-| `_user_tag` (property) | Tag del usuario para mensajes (default: `PLAYER`, cambiable con `/tag`) |
+| `_user_tag` (property) | Tag del usuario (default: `PLAYER`, cambiable con `/tag` o `#tag NOMBRE#`). Persiste entre recargas desde SQLite |
 | `_debug_logger` | Logger de depuración por personaje (`character_log.md`) |
 | `_archive_retries` | Contador de reintentos de archive en ChromaDB |
 | `checkout(branch_id, leaf_message_id)` | Rollback no destructivo a un punto del historial |
@@ -67,8 +68,8 @@ Define `VToolLlama`, la clase principal. Constructor inicializa todos los gestor
 | `chat_with_thinking(prompt, ...)` | Soporte `reasoning_content` nativo + tags semánticos |
 | `stream_chat_with_thinking(prompt, ...)` | Streaming con thinking + tags |
 | `add_tool_message(content, id)` | Agrega respuesta de herramienta al historial y la persiste en SQLite |
-| `_get_inference_messages()` | Construye mensajes con tags `[ID][SPEAK/ACT]`. Detecta multi-personaje: `[ROBERTO] texto` → `[ROBERTO][SPEAK] texto` |
-| `_split_tagged_response(text)` | Post-procesa respuestas separando `[ACT] *acción* diálogo` en líneas independientes (v13) |
+| `_get_inference_messages()` | Construye mensajes con tags `[USER=Tag][SAYS/DOES/THINKS]`. Detecta multi-personaje: `[ROBERTO] texto` → `[USER=Roberto][SAYS]` |
+| `_split_tagged_response(text)` | Post-procesa respuestas separando `[ASSISTANT=Name][DOES] *acción* diálogo` en líneas independientes (v17) |
 | `_inject_dynamic_state_into_messages(messages)` | Inyecta `[STATE]` con emoción/relación actual (solo si `inject_dynamic_state=true`) |
 | `_inject_tool_policy_if_needed(messages, prompt)` | Inyecta política de tools como mensaje system dinámico |
 | `_log_debug_turn(prompt, messages, response)` | Log de depuración a `character_log.md` |
@@ -88,7 +89,53 @@ Las tools internas se activan de forma condicional con `get_active_internal_tool
 
 El fallback textual se controla con `enable_text_tool_fallback`. La ejecucion inmediata durante streaming esta desactivada por defecto con `enable_stream_tool_execution=false`.
  
- ### `character.py` — Operaciones de Personaje
+### `inline.py` — InlineProcessor (v15+v17)
+
+Procesa comandos inline en el mensaje del usuario antes de llegar al modelo. Pipeline: hash (`#`), scene (`[]`), time (`()`), char (`-`), action (`*`), thought (`:`). Cada paso extrae su patrón, lo ejecuta, y preserva el texto circundante como segmentos cronológicos.
+
+**Pipeline:**
+```
+Input:  *Entro* [CUECA OSCURA] :peligroso: #world test# -esta nerviosa- Hola
+
+1. HASH:  #world test# → ContextInjector.add("world", "test")
+2. SCENE: [CUECA OSCURA] → ContextInjector.add("scene", "CUECA OSCURA")
+3. TIME:  (no hay)
+4. CHAR:  -esta nerviosa- → buffer _char_thought_buffer
+5. SPLIT: *Entro* → segmento ACT, :peligroso: → segmento THINKS, Hola → segmento SAYS
+6. BUILD: [{tag:DOES, content:*Entro*}, {tag:THINKS, content:peligroso}, {tag:SAYS, content:Hola}]
+```
+
+**Patrones:**
+
+| Sintaxis | Regex | Acción |
+|----------|-------|--------|
+| `#comando args#` | `#(\w+)(?:\s+(.*?))?#` | Ejecuta handler registrado |
+| `[TEXTO LARGO]` | `\[(\w+(?:\s+\w+)+[^\]]*?)\]` | `ContextInjector.add("scene", ...)` |
+| `(TEXTO LARGO)` | `\((\w+(?:\s+\w+)+[^)]*?)\)` | `ContextInjector.add("time", ...)` |
+| `*texto*` | `\*(.*?)\*` | Se etiqueta como `[USER][DOES]` |
+| `:texto:` | `:([^:]+?):` | Se etiqueta como `[USER][THINKS]` |
+| `-texto-` | `-(\w+(?:\s+\w+)+[^-]*?)-` | Buffer `_char_thought_buffer` → `[ASSISTANT][THINKS]` |
+
+**Comandos # registrados (10):**
+
+| Comando | Handler | Función |
+|---------|---------|---------|
+| `#time desc#` | `_cmd_hash_time` | `ContextInjector.add("time", desc)` |
+| `#scene desc#` | `_cmd_hash_scene` | `ContextInjector.save_scene(desc)` |
+| `#char thought#` | `_cmd_hash_char` | Buffer `_char_thought_buffer` |
+| `#world desc#` | `_cmd_hash_world` | `ContextInjector.add("world", desc)` |
+| `#goal desc#` | `_cmd_hash_goal` | `ContextInjector.add("goals", desc)` |
+| `#player desc#` | `_cmd_hash_player` | `ContextInjector.add("player", desc)` |
+| `#thought content#` | `_cmd_hash_thought` | `ContextInjector.add("thoughts", content)` |
+| `#recall tema#` | `_cmd_hash_recall` | Búsqueda ChromaDB |
+| `#mem texto#` | `_cmd_hash_mem` | Memoria persistente |
+| `#tag NOMBRE#` | `_cmd_hash_tag` | Cambia `_user_tag` |
+
+**Inyección de `#char` / `-texto-`:** el pensamiento se guarda en `_char_thought_buffer`, y durante el loop de generación `_inject_char_thoughts()` lo inserta como `system` message con formato `[ASSISTANT=Name][THINKS] *...*`. El modelo lo lee como pensamiento propio gracias al tag literal.
+
+**Comandos no registrados:** se dejan como texto literal (no se extraen ni eliminan).
+
+### `character.py` — Operaciones de Personaje
  
  | Método | Rol |
  |--------|-----|
@@ -114,7 +161,7 @@ El fallback textual se controla con `enable_text_tool_fallback`. La ejecucion in
  | `_inject_personality_into_system_prompt()` | Inyecta únicamente el prompt de sistema ESTABLE del personaje (sin TOOL_USAGE_POLICY). Se llama solo en load_character() y cuando se restaura el prompt tras trim/episode |
 | `_inject_tool_policy_if_needed(messages, user_prompt)` | Inyecta `TOOL_USAGE_POLICY` como mensaje `system` dinámico antes del último `user` solo si hay tools activas |
 | `_index_character_core()` | Indexa secciones del personaje en ChromaDB con tags `[DEFINE][*]` (identidad, background, traits, reglas, speech) |
-| `_archive_to_chroma(messages)` | Archiva mensajes en ChromaDB con formato `[speaker_tag][SPEAK] contenido` |
+| `_archive_to_chroma(messages)` | Archiva mensajes en ChromaDB con formato `[USER=speaker_tag][SAYS]` o `[ASSISTANT=speaker_tag][SAYS]` (v17) |
 | `_warmup_character_cache(prompt)` | Compila prompt, warmup KV cache, mide n_keep, llama a `_index_character_core()` |
  | `_check_and_rebuild_if_needed()` | Rebuild automático antes del chat si hay memorias nuevas |
  
@@ -173,7 +220,7 @@ Ring buffer en RAM con `deque(maxlen=chat_memory_limit+1)`. Cada `append()` veri
 
 El trim se activa al **80%** del `effective_limit` (v12 fix: antes era 30%, lo que causaba trims prematuros). Cuando se activa:
 
-1. Archiva los mensajes candidatos en ChromaDB via `_archive_to_chroma()` con formato `[speaker_tag][SPEAK]` (v9+v13).
+1. Archiva los mensajes candidatos en ChromaDB via `_archive_to_chroma()` con formato `[USER=speaker_tag][SAYS]` o `[ASSISTANT=speaker_tag][SAYS]` (v17).
 2. Genera un `context digest` extractivo (sin LLM, usa `_fallback_digest`).
 3. Inserta un unico bloque system `[RESUMEN DE CONVERSACION PREVIA]`.
 4. Guarda el digest en SQLite.
@@ -326,10 +373,22 @@ VToolLlama.load_character(name)
 └── Personality injection
 
 VToolLlama.chat(prompt)
-├── ChatMemory.add_user_message()  → escribe a SQLite + RAM
-├── _auto_trim_if_needed()          → context digest + recorte obligatorio si hace falta
-├── ModelManager.generate(messages) → infiere
-├── ChatMemory.add_assistant_message() → escribe a SQLite + RAM
-├── Auto-summary cada N turnos     → SQLite summaries
-└── Memory extraction (opt-in)     → SQLite memories
+├── _extract_inline_context()      → extrae [context ...], [...], (...) del prompt
+├── _handle_slash_command()        → ejecuta comandos /
+├── _inline_processor.process()    → extrae #, [], (), :, *, - → segmentos + contexto
+├── _char_thought_buffer[]         → buffer para #char / -texto- (se inyecta en loop)
+├── [CONTINUE] si prompt vacío     → fallback para solo-contexto
+├── ChatMemory.add_user_message()  → escribe a SQLite + RAM (con [USER=X][SAYS/DOES/THINKS])
+├── _auto_trim_if_needed()         → context digest + recorte
+├── loop (MAX 3):
+│   ├── _get_inference_messages()  → tags [USER=X][SAYS/DOES/THINKS]
+│   ├── _inject_char_thoughts()    → [ASSISTANT=X][THINKS] *...* como system
+│   ├── _inject_soul_context()
+│   ├── _inject_dynamic_state()
+│   ├── _inject_tool_policy()
+│   └── ModelManager.generate()    → infiere
+├── _feed_response_to_drift_detector()
+├── ChatMemory.add_assistant_message() → split_tagged_response + escribe a SQLite
+├── ContextInjector.mark_delivered() → entrega contexto activo
+└── _auto_index_if_needed()        → ChromaDB
 ```

@@ -34,7 +34,7 @@ Cada subpackage contiene:
 ### `engine/` — `vtool_llama/engine/AGENT.md`
 **Trigger**: El usuario pregunta sobre `VToolLlama`, chat, streaming, carga de modelo, configuración, logging, estadísticas, memoria de conversación, o el entry point de la librería.
 
-Contenido: `base.py` (VToolLlama class), `chat.py`, `character.py`, `memory.py`, `slash_commands.py`, `slash_registry.py`, `internal.py`, `chat_memory.py`, `config_manager.py`, `logger_manager.py`, `stats_manager.py`, `tokenizer_utils.py`, `context_builder.py` (orquestador de contexto), `retrieval.py` (estrategias de recuperación).
+Contenido: `base.py` (VToolLlama class), `chat.py`, `character.py`, `inline.py` (InlineProcessor, comandos inline #[]():*-), `memory.py`, `slash_commands.py`, `slash_registry.py`, `internal.py`, `chat_memory.py`, `config_manager.py`, `logger_manager.py`, `stats_manager.py`, `tokenizer_utils.py`, `context_builder.py` (orquestador de contexto), `retrieval.py` (estrategias de recuperación).
 
 ### `model/` — `vtool_llama/model/AGENT.md`
 **Trigger**: El usuario pregunta sobre carga/descarga de modelos GGUF, generación de texto, detección CUDA, warmup de KV Cache, conteo de tokens, o soporte de tool calling.

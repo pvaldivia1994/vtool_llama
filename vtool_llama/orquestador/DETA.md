@@ -16,20 +16,23 @@ orquestador/
 
 ## Archivos
 
-### `tags.py` — Sistema de Tags (v13)
+### `tags.py` — Sistema de Tags Literales (v17)
 
-Define la taxonomía unificada de tags semánticos.
+Define la taxonomía de tags con identidad explícita.
 
-| Tag | Nivel | Uso |
-|-----|-------|-----|
+| Tag | Se lee | Uso |
+|-----|--------|-----|
+| `[USER=X][SAYS]` | "User X says" | El usuario humano habla |
+| `[USER=X][DOES]` | "User X does" | El usuario realiza una acción |
+| `[USER=X][THINKS]` | "User X thinks" | El usuario piensa internamente |
+| `[ASSISTANT=X][SAYS]` | "Assistant X says" | El personaje habla (es el modelo) |
+| `[ASSISTANT=X][DOES]` | "Assistant X does" | El personaje actúa (es el modelo) |
+| `[ASSISTANT=X][THINKS]` | "Assistant X thinks" | El personaje piensa (es el modelo) |
 | `[DEFINE]` | Sistema | Definición permanente del personaje |
 | `[STATE]` | Sistema | Estado emocional/relacional actual |
 | `[SCENE]` | Sistema | Descripción de escena |
-| `[ID][SPEAK]` | Diálogo | Cuando un personaje HABLA |
-| `[ID][ACT]` | Acción | Cuando un personaje ACTÚA |
-| `[ID][THOUGHT]` | Pensamiento | Pensamiento interno del personaje |
 
-`TAG_DEFINITIONS` contiene la guía completa que se inyecta en `base_prompt.yaml`.
+`TAG_DEFINITIONS` contiene la guía completa que se inyecta en el system prompt del personaje (vía compiler).
 
 ### `context_injector.py` — ContextInjector
 

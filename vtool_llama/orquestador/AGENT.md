@@ -4,6 +4,6 @@ Sistema de inyección de contexto conversacional dinámico. Permite agregar entr
 
 ## AGENT
 
-Si el usuario pregunta sobre contexto dinámico, tags `[CONTEXT][...]`, el comando `/context`, la escena, o cómo influenciar el comportamiento del personaje externamente, leer `DETA.md` antes de responder.
+Si el usuario pregunta sobre contexto dinámico, tags `[CONTEXT][...]`, el comando `/context`, la escena, tags `[USER=]`/`[ASSISTANT=]`, o cómo influenciar el comportamiento del personaje externamente, leer `DETA.md` antes de responder.
 
 Tipos: `scene`, `character`, `thoughts`, `goals`, `time`, `world`, `memory`, `custom`.
