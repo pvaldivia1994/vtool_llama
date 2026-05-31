@@ -65,7 +65,7 @@ class ConfigSchema:
     short_memory_limit: int = 5
     chat_memory_retrieval_limit: int = 3
     characters_directory: str = ""
-    chat_memory_limit: int = 5
+
     semantic_memory_enabled: bool = False
     disable_thinking: bool = False
     context_snapshot_debug: bool = False
@@ -78,3 +78,8 @@ class ConfigSchema:
     enable_text_tool_fallback: bool = True
     enable_stream_tool_execution: bool = False
     expand_n_ctx_for_core: bool = False
+    memory_rag_budget: int = 300
+    inject_dynamic_state: bool = False
+    memory_rag_min_similarity: float = 0.5
+    memory_archive_max_retries: int = 3
+    embedding_model: str = ""

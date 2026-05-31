@@ -37,6 +37,7 @@ def load_character(
         )
 
     self._loading = True
+    self._archive_retries = 0
     try:
         self._character_manager.cancel_load()
         result = self._character_manager.load_character(name)
@@ -49,7 +50,7 @@ def load_character(
             self._config = merged
             self._model_manager._config = merged
             self._soul_generator._config = merged
-            self._memory._history_limit = merged.chat_memory_limit
+            # El deque maxlen se define en ChatMemory.__init__ con history_limit
 
         old_store = getattr(self, "_chat_store", None)
         if old_store:
@@ -87,38 +88,67 @@ def load_character(
         # Inicializar SQLite event store + ContextBuilder
         if char_dir:
             db_path = char_dir / "_memory" / "chat.db"
-            self._chat_store = ChatStore(str(db_path))
+            self._chat_store = ChatStore(str(db_path), log_fn=lambda t, m: self._log_debug(t, m))
 
             tokenize_fn = None
             if self._model_manager.is_loaded:
                 tokenize_fn = self._model_manager.count_tokens
             self._token_counter = TokenCounter(tokenize_fn=tokenize_fn)
 
-            # Inicializar ChromaDB semántico (opcional, por personaje)
-            enable_semantic = semantic_memory or self._config.semantic_memory_enabled
-            if enable_semantic:
-                try:
-                    from ..db.chroma_store import ChromaStore, HAS_CHROMA
-                    if HAS_CHROMA:
-                        self._semantic_chroma = ChromaStore(
-                            char_dir / "_memory" / "semantic",
-                            "conversation_chunks",
-                            log_fn=lambda m: self._log_debug("SEMANTIC", m),
-                        )
-                        self._semantic_chroma.initialize()
-                    else:
-                        self._semantic_chroma = None
-                except Exception:
+            # Inicializar ChromaDB (v12: siempre, no solo si semantic_memory está activo)
+            try:
+                from ..db.chroma_store import ChromaStore, HAS_CHROMA
+                if HAS_CHROMA:
+                    # Colección para indexado semántico de conversación
+                    self._semantic_chroma = ChromaStore(
+                        char_dir / "_memory" / "semantic",
+                        "conversation_chunks",
+                        log_fn=lambda m: self._log_debug("SEMANTIC", m),
+                    )
+                    self._semantic_chroma.initialize()
+
+                    # Colección para memoria archivada (v9+)
+                    self._archived_chroma = ChromaStore(
+                        char_dir / "_memory" / "semantic",
+                        "archived_memory",
+                        log_fn=lambda m: self._log_debug("ARCHIVE", m),
+                    )
+                    self._archived_chroma.initialize()
+                else:
                     self._semantic_chroma = None
-            else:
+                    self._archived_chroma = None
+            except Exception:
                 self._semantic_chroma = None
+                self._archived_chroma = None
+
+            # Log diagnóstico de ChromaDB
+            self._log_debug("CHROMA", f"semantic={'SI' if self._semantic_chroma and self._semantic_chroma.is_available else 'NO'}, "
+                            f"archived={'SI' if self._archived_chroma and self._archived_chroma.is_available else 'NO'}")
+
+            # Debug logger por personaje
+            from .debug_logger import CharacterDebugLogger
+            self._debug_logger = CharacterDebugLogger(char_dir=char_dir, config=self._config)
+
+            # Archivar mensajes rotados del deque en ChromaDB (v12)
+            self._memory.set_archive_callback(lambda msgs: self._archive_to_chroma(msgs))
 
             strategies = [
                 ContextInjectionStrategy(),
                 SceneContextStrategy(),
             ]
             if self._semantic_chroma and self._semantic_chroma.is_available:
-                strategies.append(SemanticRetrievalStrategy(chroma_store=self._semantic_chroma))
+                strategies.append(SemanticRetrievalStrategy(
+                    chroma_store=self._semantic_chroma,
+                    min_similarity=self._config.memory_rag_min_similarity,
+                    rag_budget=self._config.memory_rag_budget,
+                ))
+            if getattr(self, "_archived_chroma", None) and self._archived_chroma.is_available:
+                strategies.append(SemanticRetrievalStrategy(
+                    chroma_store=self._archived_chroma,
+                    min_similarity=self._config.memory_rag_min_similarity,
+                    rag_budget=self._config.memory_rag_budget,
+                    priority=25,
+                ))
             strategies.append(RecentMessagesStrategy())
 
             self._context_builder = ContextBuilder(
@@ -391,7 +421,12 @@ def _warmup_character_cache(self: VToolLlama, prompt: Optional[str] = None) -> N
 
     # 1. Compilar prompt runtime y mantener prompt full para auditoria
     full_prompt = self._character_manager.build_full_system_prompt(self._config.system_prompt, self._config)
-    compact_prompt = self._character_manager.build_compact_system_prompt(self._config.system_prompt, self._config)
+    # Solo compilar compact_prompt si está activo (evita trabajo innecesario)
+    compact_prompt = (
+        self._character_manager.build_compact_system_prompt(self._config.system_prompt, self._config)
+        if getattr(self._config, "compact_system_prompt", False)
+        else ""
+    )
     if prompt is None:
         prompt = self._character_manager.build_system_prompt(self._config.system_prompt, self._config)
 
@@ -411,8 +446,7 @@ def _warmup_character_cache(self: VToolLlama, prompt: Optional[str] = None) -> N
         _write_prompt_yaml(memory_dir / "base_prompt.yaml", prompt)
         if full_prompt != prompt:
             _write_prompt_yaml(memory_dir / "base_prompt_full.yaml", full_prompt)
-        if compact_prompt != prompt:
-            _write_prompt_yaml(memory_dir / "base_prompt_compact.yaml", compact_prompt)
+        # base_prompt_compact.yaml ya no se genera (era redundante)
 
     import hashlib
     prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
@@ -492,7 +526,99 @@ def _warmup_character_cache(self: VToolLlama, prompt: Optional[str] = None) -> N
 
     self._character_manager.mark_rebuild_done(prompt)
 
+    # v11: indexar secciones del personaje en ChromaDB para refuerzo semántico
+    self._index_character_core()
+
 VToolLlama._warmup_character_cache = _warmup_character_cache
+
+
+def _index_character_core(self: VToolLlama) -> None:
+    """Indexa secciones clave del personaje en ChromaDB para refuerzo semántico (v11).
+
+    Se ejecuta durante load_character() después del warmup.
+    Los documentos usan tags [CHARACTER][*] que el modelo ya conoce.
+    """
+    archived = getattr(self, "_archived_chroma", None)
+    if not archived or not archived.is_available:
+        return
+
+    try:
+        # Limpiar índices previos del personaje
+        existing = archived.get_all_documents()
+        old_ids = [d["id"] for d in existing if d["id"] and str(d["id"]).startswith("charcore_")]
+        if old_ids:
+            archived.delete_ids(old_ids)
+
+        manager = self._character_manager
+        docs = []
+
+        # [CHARACTER][IDENTITY]
+        if manager.identity.name:
+            docs.append({
+                "id": "charcore_identity",
+                "document": (
+                    f"[CHARACTER][IDENTITY] Your name is {manager.identity.name}. "
+                    f"Your role is {manager.identity.role}. "
+                    f"Your age is {manager.identity.age}."
+                ),
+                "metadata": {"type": "charcore", "section": "identity"},
+            })
+
+        # [CHARACTER][BACKGROUND]
+        if manager.identity.background:
+            docs.append({
+                "id": "charcore_background",
+                "document": f"[CHARACTER][BACKGROUND] {manager.identity.background}",
+                "metadata": {"type": "charcore", "section": "background"},
+            })
+
+        # [CHARACTER][SCENARIO]
+        if manager.identity.scenario:
+            docs.append({
+                "id": "charcore_scenario",
+                "document": f"[CHARACTER][SCENARIO] {manager.identity.scenario}",
+                "metadata": {"type": "charcore", "section": "scenario"},
+            })
+
+        # [CHARACTER][TRAITS]
+        if manager.personality_dna.traits:
+            docs.append({
+                "id": "charcore_traits",
+                "document": f"[CHARACTER][TRAITS] {', '.join(manager.personality_dna.traits)}",
+                "metadata": {"type": "charcore", "section": "traits"},
+            })
+
+        # [CHARACTER][RULES]
+        if manager.rules.core_rules:
+            rules_text = "\n".join(f"- {r}" for r in manager.rules.core_rules)
+            docs.append({
+                "id": "charcore_rules",
+                "document": f"[CHARACTER][RULES]\n{rules_text}",
+                "metadata": {"type": "charcore", "section": "rules"},
+            })
+
+        # [CHARACTER][SPEECH]
+        if manager.speech.style or manager.speech.tone:
+            style = manager.speech.style or "Not specified"
+            tone = manager.speech.tone or "Not specified"
+            verbosity = manager.speech.verbosity or "Not specified"
+            docs.append({
+                "id": "charcore_speech",
+                "document": (
+                    f"[CHARACTER][SPEECH] Style: {style}. Tone: {tone}. Verbosity: {verbosity}."
+                ),
+                "metadata": {"type": "charcore", "section": "speech"},
+            })
+
+        if docs:
+            archived.add_documents_batch(docs)
+            self._log_debug("CHAR", f"Indexadas {len(docs)} secciones del personaje en ChromaDB")
+
+    except Exception as e:
+        self._log_debug("CHAR", f"Error indexando secciones del personaje: {e}")
+
+
+VToolLlama._index_character_core = _index_character_core
 
 
 def rebuild_personality_state(self: VToolLlama) -> None:

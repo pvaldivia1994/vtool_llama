@@ -15,11 +15,25 @@ from vtool_llama import VToolLlama
 from vtool_llama.db import ChatStore
 
 
-def _fill_memory(llm: VToolLlama, count: int = 10):
-    """Llena el ChatMemory con mensajes simulados."""
-    for i in range(count):
-        llm._memory.add_user_message(f"Mensaje de prueba número {i} con suficiente texto para ocupar tokens.")
-        llm._memory.add_assistant_message(f"Respuesta de prueba número {i} con suficiente texto para simular una conversación real.")
+def _fill_memory(llm: VToolLlama, count: int = 10, large: bool = False):
+    """Llena el ChatMemory con mensajes simulados.
+    Si large=True, usa mensajes más largos para superar umbrales de trim más altos."""
+    if large:
+        for i in range(count):
+            llm._memory.add_user_message(
+                f"Mensaje de prueba número {i} con suficiente texto para ocupar muchos tokens. "
+                f"Esta es una conversación larga que debe superar el umbral del trim. "
+                f"Repetimos información para ocupar más espacio y forzar el trim."
+            )
+            llm._memory.add_assistant_message(
+                f"Respuesta de prueba número {i} con suficiente texto para simular una conversación real. "
+                f"El personaje responde de manera extensa para ocupar más tokens en el contexto. "
+                f"Esto ayuda a que el trim se active con el umbral del 80%."
+            )
+    else:
+        for i in range(count):
+            llm._memory.add_user_message(f"Mensaje de prueba número {i} con suficiente texto para ocupar tokens.")
+            llm._memory.add_assistant_message(f"Respuesta de prueba número {i} con suficiente texto para simular una conversación real.")
 
 
 def _make_llm(tmp, n_ctx=512, reserve=50, history_limit=50):
@@ -141,7 +155,8 @@ class TestAutoTrimSmallContext:
         from unittest.mock import MagicMock
 
         with tempfile.TemporaryDirectory() as tmp:
-            llm, store = _make_llm(tmp)
+            # Usar n_ctx pequeño para que el trim se active al 80%
+            llm, store = _make_llm(tmp, n_ctx=256, reserve=50)
 
             test_system = "[SYSTEM] Eres un personaje de prueba."
             llm._memory.system_prompt = test_system
@@ -153,7 +168,7 @@ class TestAutoTrimSmallContext:
             }
             llm._model_manager.generate = MagicMock(return_value=mock_result)
 
-            _fill_memory(llm, 20)
+            _fill_memory(llm, 10, large=True)
 
             llm._auto_trim_if_needed()
 
@@ -172,27 +187,27 @@ class TestAutoTrimSmallContext:
 
             store.close()
 
-    def test_context_digest_uses_helper_prompts(self):
-        """Verifica que el digest use los prompts helper versionados."""
-        from unittest.mock import MagicMock
-
+    def test_context_digest_usas_extractive_fallback(self):
+        """Verifica que el digest use fallback extractivo (sin LLM) desde v9."""
         with tempfile.TemporaryDirectory() as tmp:
-            llm, store = _make_llm(tmp)
+            llm, store = _make_llm(tmp, n_ctx=256, reserve=50)
 
             llm._memory.system_prompt = "[SYSTEM] Eres un personaje de prueba."
             llm._memory.clear()
-            llm._model_manager.generate = MagicMock(return_value={
-                "choices": [{"message": {"content": "Hechos estables:\n- El usuario conversa en español."}}]
-            })
 
-            _fill_memory(llm, 15)
+            _fill_memory(llm, 10, large=True)
             llm._auto_trim_if_needed()
 
-            sent_messages = llm._model_manager.generate.call_args.kwargs["messages"]
-            assert "context compressor" in sent_messages[0]["content"]
-            assert "Return the digest in Spanish" in sent_messages[0]["content"]
-            assert "CONVERSATION TO COMPRESS:" in sent_messages[1]["content"]
-            assert "Mensaje de prueba" in sent_messages[1]["content"]
+            # El trim insertó un digest extractivo (sin LLM)
+            has_digest = any(
+                "RESUMEN" in (m.content or "") or "resumen" in (m.content or "").lower()
+                for m in llm._memory.messages
+            )
+            assert has_digest, "El trim debería haber insertado un digest extractivo"
+
+            # El system prompt sobrevive
+            assert llm._memory.messages[0].role == "system"
+            assert "personaje de prueba" in (llm._memory.messages[0].content or "")
 
             store.close()
 
@@ -258,7 +273,7 @@ class TestKVCacheProtection:
         from unittest.mock import MagicMock
 
         with tempfile.TemporaryDirectory() as tmp:
-            llm, store = _make_llm(tmp)
+            llm, store = _make_llm(tmp, n_ctx=256, reserve=50)
 
             test_system = "[SYSTEM] Test."
             llm._memory.system_prompt = test_system
@@ -270,7 +285,7 @@ class TestKVCacheProtection:
             }
             llm._model_manager.generate = MagicMock(return_value=mock_result)
 
-            _fill_memory(llm, 20)
+            _fill_memory(llm, 10, large=True)
 
             # Reset mocks para medir llamadas
             mock_model = llm._model_manager._model

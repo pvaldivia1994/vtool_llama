@@ -87,7 +87,7 @@ class VToolLlama:
         # ------------------------------------------------------------------
         self._memory = ChatMemory(
             system_prompt=self._config.system_prompt,
-            history_limit=self._config.chat_memory_limit,
+            history_limit=self._config.history_limit,
         )
 
         # ------------------------------------------------------------------
@@ -145,6 +145,7 @@ class VToolLlama:
         # 6e. Flag de carga de personaje
         # ------------------------------------------------------------------
         self._loading: bool = False
+        self._archive_retries: int = 0
 
         # ------------------------------------------------------------------
         # 7. Short memory (últimos N mensajes para contexto inmediato)
@@ -406,7 +407,9 @@ class VToolLlama:
         all_messages = system_messages + history_messages
         system_tokens = _count_messages(system_messages) if system_messages else _count(system_text)
         history_tokens = _count_messages(history_messages) if history_messages else _count(history_text)
-        total_tokens = _count_messages(all_messages) if all_messages else 0
+        # Si el core está expandido (v8), el system prompt no descuenta del presupuesto
+        core_expanded = self._model_manager._core_expanded and self._model_manager._user_n_ctx
+        total_tokens = history_tokens if core_expanded else (_count_messages(all_messages) if all_messages else 0)
         effective_context_limit = max(0, max_tokens - reserved)
         prompt_budget_available = max(0, effective_context_limit - total_tokens)
         response_capacity = max(0, max_tokens - total_tokens)
@@ -628,6 +631,10 @@ class VToolLlama:
     def _log_debug(self, tag: str, message: str) -> None:
         if hasattr(self, "_log_manager") and self._log_manager:
             self._log_manager.debug(tag, message)
+        # También al character_log.md si el debug_logger existe
+        deb = getattr(self, "_debug_logger", None)
+        if deb and deb._enabled and tag in ("SQLITE", "CHROMA", "STATE", "MODEL", "TOOL"):
+            deb.log_event(tag, message)
 
     def _log_info(self, message: str) -> None:
         if hasattr(self, "_log_manager") and self._log_manager:

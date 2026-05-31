@@ -226,19 +226,27 @@ class CharacterCompiler:
         if not self.manager.is_loaded:
             return ""
 
+        # v10: solo incluir capas que aporten valor narrativo.
+        # Usar tags [CONTEXT][*] del orquestador, ya definidos en base_prompt.yaml.
         parts = []
 
-        # 15. [RELATIONSHIP]
-        self._try_add(parts, self._resolve_relationship())
+        # [CONTEXT][CHARACTER] — emoción actual (si no es neutral)
+        emotion = self.manager.runtime_state.current_emotion
+        if emotion and emotion != "neutral":
+            parts.append(f"[CONTEXT][CHARACTER] Currently feeling {emotion}.")
 
-        # 16. [EMOTIONAL STATE]
-        self._try_add(parts, self._resolve_state())
+        # [CONTEXT][RELATIONSHIP] — solo si hay dinámicas relevantes
+        rel = self.manager.relationship_state
+        if rel.dynamics and len(rel.dynamics) > 0:
+            dynamics_text = rel.dynamics[0][:200]
+            parts.append(f"[CONTEXT][RELATIONSHIP] {dynamics_text}")
 
-        # Capas dinámicas
-        self._try_add(parts, self._resolve_active_mods_description())
-        self._try_add(parts, self._resolve_memory())
-        self._try_add(parts, self._resolve_psychology())
-        self._try_add(parts, self._resolve_persona())
+        # NO incluir:
+        # - _resolve_psychology() → scores Big Five, el modelo no los entiende
+        # - _resolve_persona()    → contradice al DNA
+        # - _resolve_relationship() → Trust: 0.50, Familiarity: 0.20
+        # - _resolve_memory()     → ya se inyecta via ContextBuilder si está configurado
+        # - _resolve_active_mods() → solo si hay mods, pero no es información narrativa
 
         return "\n".join(parts)
 

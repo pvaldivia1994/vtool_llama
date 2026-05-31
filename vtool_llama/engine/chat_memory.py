@@ -57,6 +57,8 @@ class ChatMemory:
         self._conversation_id: Optional[str] = None
         self._branch_id: str = "main"
         self._active_leaf_id: int = 0
+        self._archive_callback: Optional[callable] = None
+        self._last_archived_content: str = ""
 
         self._messages: deque[Message] = deque(
             [Message(role="system", content=system_prompt)],
@@ -115,8 +117,8 @@ class ChatMemory:
                 else:
                     history.append(m)
 
-        # Limitar a history_limit mensajes (los más recientes)
-        max_history = self._history_limit
+        # Limitar al maxlen del deque (v12: usar maxlen real, no _history_limit)
+        max_history = (self._messages.maxlen - 1) if self._messages.maxlen else len(history)
         if len(history) > max_history:
             history = history[-max_history:]
 
@@ -170,15 +172,41 @@ class ChatMemory:
     # Operaciones del historial
     # ------------------------------------------------------------------
 
+    def set_archive_callback(self, callback: Optional[callable]) -> None:
+        """Establece un callback para archivar mensajes cuando rotan del deque."""
+        self._archive_callback = callback
+
     def _ensure_system_prompt(self) -> None:
         """Reinserta el system prompt si fue descartado por el deque."""
         if not self._messages or self._messages[0].role != "system":
             self._messages.appendleft(Message(role="system", content=self._system_prompt))
 
+    def _archive_oldest_if_full(self) -> None:
+        """Si el deque está lleno, archiva el mensaje más antiguo
+        antes de que sea rotado (v12).
+        Solo archiva si el mensaje cambió (evita duplicados)."""
+        if not self._archive_callback:
+            return
+        if not self._messages.maxlen:
+            return
+        if len(self._messages) < self._messages.maxlen:
+            return
+        # El mensaje en índice 1 es el primer no-system
+        oldest = self._messages[1] if len(self._messages) > 1 else None
+        if not oldest or oldest.role == "system" or not oldest.content:
+            return
+        # No archivar el mismo mensaje dos veces
+        content_preview = oldest.content[:100]
+        if content_preview == self._last_archived_content:
+            return
+        self._last_archived_content = content_preview
+        self._archive_callback([oldest])
+
     def add_user_message(self, content: str) -> Optional[int]:
         """Agrega un mensaje del usuario al historial.
         Si hay store vinculado, también persiste en SQLite.
         Retorna el message_id si se persistió, None si no."""
+        self._archive_oldest_if_full()
         self._messages.append(Message(role="user", content=content))
         self._ensure_system_prompt()
         if self._store and self._conversation_id:
@@ -198,6 +226,7 @@ class ChatMemory:
         """Agrega la respuesta del asistente al historial.
         Si hay store vinculado, también persiste en SQLite.
         Retorna el message_id si se persistió, None si no."""
+        self._archive_oldest_if_full()
         self._messages.append(Message(role="assistant", content=content, tool_calls=tool_calls))
         self._ensure_system_prompt()
         if self._store and self._conversation_id:

@@ -28,6 +28,7 @@ class SceneContextStrategy:
         branch_id: str,
         leaf_message_id: int,
         budget: int,
+        **kwargs,
     ) -> PromptSection:
         from .context_injector import ContextInjector
 
@@ -56,6 +57,7 @@ class ContextInjectionStrategy:
         branch_id: str,
         leaf_message_id: int,
         budget: int,
+        **kwargs,
     ) -> PromptSection:
         from .context_injector import ContextInjector
 

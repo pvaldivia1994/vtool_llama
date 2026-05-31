@@ -176,3 +176,71 @@ def test_load_model_resets_n_keep():
     mgr._n_keep = None  # como hace load_model()
 
     assert mgr._n_keep is None
+
+
+# ======================================================================
+# expand_n_ctx_for_core (v8) — get_token_usage
+# ======================================================================
+
+
+def test_expand_n_ctx_excludes_system_prompt_from_budget():
+    """Con core expandido, el system prompt no descuenta del presupuesto."""
+    from vtool_llama import VToolLlama
+    import tempfile, os, json
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # Config mínima
+        config_path = os.path.join(tmp, "config.json")
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "debug": False, "n_ctx": 1000, "n_batch": 1,
+                "gpu_layers": 0, "temperature": 0.7, "top_p": 0.9,
+                "top_k": 40, "repeat_penalty": 1.1, "max_tokens": 256,
+                "system_prompt": "test", "enable_logging": False,
+                "history_limit": 50, "auto_trim_context": True,
+                "context_reserve_tokens": 100,
+                "models_directory": tmp, "default_model": "none.gguf",
+                "compact_system_prompt": False,
+            }, f)
+
+        llm = VToolLlama(config_path=config_path, auto_load=False)
+
+        # Mock del modelo para simular expansión
+        mock_model = MagicMock()
+        mock_model.tokenize.side_effect = lambda text, *a, **kw: [0] * max(1, len(text) // 4)
+        llm._model_manager._model = mock_model
+        llm._model_manager._tokenize_fn = mock_model.tokenize
+        llm._model_manager._tokenize_fn = mock_model.tokenize
+        llm._model_manager.count_messages_tokens = MagicMock(
+            side_effect=lambda messages: sum(len(m["content"]) for m in messages)
+        )
+        # is_loaded es True porque _model ya es un MagicMock
+
+        # Activar expansión de core (v8)
+        llm._model_manager._core_expanded = True
+        llm._model_manager._user_n_ctx = 1000
+        # Config n_ctx es el expandido (user + core)
+        llm._config.n_ctx = 1500  # 1000 user + 500 core estimado
+
+        # Poner system prompt + un mensaje de usuario en memoria
+        llm._memory.system_prompt = "sistema" * 50  # ~400 chars → ~100 tokens
+        llm._memory.clear()
+        llm._memory.add_user_message("hola mundo")  # ~10 chars → ~3 tokens
+
+        usage = llm.get_token_usage()
+
+        # El system prompt NO descuenta del presupuesto
+        assert usage["total_tokens"] == usage["history_tokens"], \
+            "total_tokens debe ser igual a history_tokens (system no cuenta)"
+        assert usage["total_tokens"] < usage["system_tokens"], \
+            "total_tokens debe ser menor que system_tokens (core expandido)"
+        assert usage["max_tokens"] == 1000, \
+            "max_tokens debe ser user_n_ctx, no el expandido"
+        assert usage["prompt_budget_available"] > 800, \
+            "Con core expandido, debe quitar casi todo el presupuesto disponible"
+
+        # Verificar que system_tokens sigue reportándose correctamente
+        assert usage["system_tokens"] > 0, \
+            "system_tokens debe reportarse igual"
+        assert usage["n_keep"] == 0 or usage["n_keep"] >= 0, \
+            "n_keep no debe romper"

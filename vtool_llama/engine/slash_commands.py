@@ -491,7 +491,7 @@ def _cmd_config(self: VToolLlama, args: str) -> str:
     # Mostrar solo campos relevantes
     relevant = ["temperature", "top_p", "top_k", "repeat_penalty", "max_tokens",
                 "n_ctx", "n_batch", "gpu_layers", "threads", "flash_attn",
-                "debug", "chat_memory_limit", "auto_summary_interval",
+                "debug", "auto_summary_interval",
                 "semantic_memory_enabled", "disable_thinking", "system_prompt"]
 
     for key in relevant:

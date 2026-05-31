@@ -116,16 +116,21 @@ class TestOptimizations:
         compiler._resolve_psychology = MagicMock(return_value="")
         compiler._resolve_persona = MagicMock(return_value="")
 
+        # v10: compile_dynamic_prompt usa datos reales del manager, no los resolvers
+        from types import SimpleNamespace
+        manager.runtime_state = SimpleNamespace(current_emotion="angry")
+        manager.relationship_state = SimpleNamespace(dynamics=["Se siente tensión entre ambos."])
+
         static_prompt = compiler.compile_static_prompt("BASE")
         dynamic_prompt = compiler.compile_dynamic_prompt()
 
         assert "STATIC_CORE" in static_prompt
         assert "STATIC_ANTI" in static_prompt
-        assert "DYNAMIC_STATE" not in static_prompt
-        assert "DYNAMIC_RELATIONSHIP" not in static_prompt
+        assert "angry" not in static_prompt, "emoción dinámica no debe estar en estático"
+        assert "Se siente tensión" not in static_prompt, "relación dinámica no debe estar en estático"
 
-        assert "DYNAMIC_STATE" in dynamic_prompt
-        assert "DYNAMIC_RELATIONSHIP" in dynamic_prompt
+        assert "[CONTEXT][CHARACTER]" in dynamic_prompt
+        assert "[CONTEXT][RELATIONSHIP]" in dynamic_prompt
         assert "STATIC_CORE" not in dynamic_prompt
 
     def test_compiler_reports_tokens_by_prompt_layer(self):
@@ -248,6 +253,8 @@ class TestOptimizations:
     def test_inject_dynamic_state_into_messages(self):
         """Verifica que _inject_dynamic_state_into_messages inserte el estado dinámico antes del mensaje del usuario."""
         engine = MagicMock(spec=VToolLlama)
+        engine._config = MagicMock()
+        engine._config.inject_dynamic_state = True
         engine._character_manager = MagicMock()
         engine._character_manager.is_loaded = True
         engine._character_manager.build_dynamic_prompt.return_value = "EMOTION: angry\nTRUST: low"
@@ -265,6 +272,7 @@ class TestOptimizations:
         # Debería haber 4 mensajes ahora (se inserta en la posición 2, justo antes de user)
         assert len(res_messages) == 4
         assert res_messages[2]["role"] == "system"
-        assert "[ESTADO DINÁMICO DEL PERSONAJE]" in res_messages[2]["content"]
+        # v10: el contenido se inyecta directamente sin header adicional
         assert "EMOTION: angry" in res_messages[2]["content"]
+        assert "TRUST: low" in res_messages[2]["content"]
         assert res_messages[3]["role"] == "user"

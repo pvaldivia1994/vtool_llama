@@ -15,13 +15,14 @@ from ..tools import (
 
 
 def _get_inference_messages(self: VToolLlama) -> list[dict]:
-    """Retorna los mensajes para inferencia, omitiendo el system prompt
-    si el core está expandido en el KV cache (v8)."""
+    """Retorna los mensajes para inferencia."""
     messages = self._memory.get_context_messages()
-    if self._model_manager._core_expanded and self._model_manager._n_keep:
-        # El core ya está en posiciones [0..n_keep) del KV cache
-        # No necesita reenviarse en cada turno
-        messages = [m for m in messages if m.get("role") != "system"]
+    # v10: anteponer tag semántico a mensajes del usuario
+    for msg in messages:
+        if msg.get("role") == "user":
+            content = msg.get("content", "")
+            if not content.startswith("[USER]") and not content.startswith("[PLAYER]"):
+                msg["content"] = f"[USER] {content}"
     return messages
 
 VToolLlama._get_inference_messages = _get_inference_messages
@@ -51,6 +52,24 @@ def _inject_tool_policy_if_needed(
     messages.append(policy_msg)
 
 VToolLlama._inject_tool_policy_if_needed = _inject_tool_policy_if_needed
+
+
+def _log_debug_turn(self: VToolLlama, prompt: str, messages: list[dict],
+                     response: str = "") -> None:
+    """Helper para debug logging en chat/stream/thinking."""
+    deb = getattr(self, "_debug_logger", None)
+    if not deb or not deb._enabled:
+        return
+    try:
+        deb.log_turn_start(prompt)
+        deb.log_messages_sent_to_model(messages)
+        if response:
+            deb.log_model_response(response)
+            deb.log_context_info(self.get_token_usage())
+    except Exception:
+        pass
+
+VToolLlama._log_debug_turn = _log_debug_turn
 
 
 def _extract_inline_context(self: VToolLlama, prompt: str) -> str:
@@ -164,20 +183,24 @@ VToolLlama._inject_soul_context_into_messages = _inject_soul_context_into_messag
 
 
 def _inject_dynamic_state_into_messages(self: VToolLlama, messages: list[dict]) -> list[dict]:
+    # v10: desactivado por defecto (inject_dynamic_state: false)
+    if not getattr(self._config, "inject_dynamic_state", False):
+        return messages
     if not self._character_manager.is_loaded:
         return messages
-    
+
     dynamic_prompt = self._character_manager.build_dynamic_prompt()
     if not dynamic_prompt.strip():
         return messages
-    
+
     for i in range(len(messages) - 1, -1, -1):
         if messages[i].get("role") == "user":
-            messages.insert(i, {"role": "system", "content": f"[ESTADO DINÁMICO DEL PERSONAJE]\n{dynamic_prompt}"})
+            # v10: el header ahora usa el tag del orquestador
+            messages.insert(i, {"role": "system", "content": dynamic_prompt})
             break
     else:
-        messages.append({"role": "system", "content": f"[ESTADO DINÁMICO DEL PERSONAJE]\n{dynamic_prompt}"})
-    
+        messages.append({"role": "system", "content": dynamic_prompt})
+
     return messages
 
 VToolLlama._inject_dynamic_state_into_messages = _inject_dynamic_state_into_messages
@@ -380,6 +403,9 @@ def chat(
                     msg_choice = result["choices"][0]["message"]
                     response_text = msg_choice.get("content") or ""
                     tool_calls = msg_choice.get("tool_calls", None)
+
+                    # Debug log: después de generate() para capturar mensajes completos
+                    self._log_debug_turn(prompt, messages, response_text)
 
                     self._record_stats(result)
                 else:
@@ -601,6 +627,9 @@ def stream_chat(
 
                 self._record_stats_from_stream(stream, full_response)
 
+                # Debug log: mensajes + respuesta completa
+                self._log_debug_turn(prompt, messages, full_response)
+
                 handled = self._tool_manager.handle_structured_calls(
                     final_tool_calls or [],
                     scene_prompt,
@@ -692,6 +721,7 @@ def chat_with_thinking(
         messages = self._get_inference_messages()
         self._inject_dynamic_state_into_messages(messages)
         self._inject_tool_policy_if_needed(messages, prompt)
+
         self._stats.begin_generation()
 
         try:
@@ -719,6 +749,9 @@ def chat_with_thinking(
             full_history_content = content
             if thinking:
                 full_history_content = f"<think>\n{thinking}\n</think>\n{content}"
+
+            # Debug log: mensajes + respuesta
+            self._log_debug_turn(prompt, messages, content)
 
             self._memory.add_assistant_message(full_history_content)
             self._log_generation_stats()
@@ -770,6 +803,7 @@ def stream_chat_with_thinking(
         messages = self._get_inference_messages()
         self._inject_dynamic_state_into_messages(messages)
         self._inject_tool_policy_if_needed(messages, prompt)
+
         self._stats.begin_generation()
 
         try:
@@ -849,6 +883,10 @@ def stream_chat_with_thinking(
                     yield ("content", buffer)
 
             self._record_stats_from_stream(stream, full_response)
+
+            # Debug log: mensajes + respuesta
+            self._log_debug_turn(prompt, messages, full_response)
+
             self._memory.add_assistant_message(full_response)
             self._log_generation_stats()
             self._auto_save_if_needed()

@@ -112,10 +112,11 @@ CREATE TABLE IF NOT EXISTS state (
 class ChatStore:
     """SQLite event store for chat history with branching support."""
 
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str, log_fn: Optional[callable] = None):
         self._path = str(Path(db_path).resolve())
         self._lock = threading.RLock()
         self._conn: Optional[sqlite3.Connection] = None
+        self._log = log_fn or (lambda tag, msg: None)
         self.ensure_schema()
 
     # ------------------------------------------------------------------
@@ -148,6 +149,7 @@ class ChatStore:
     # ------------------------------------------------------------------
 
     def get_or_create_conversation(self, character_name: str) -> Conversation:
+        self._log("SQLITE", f"get_or_create_conversation character={character_name}")
         with self._tx() as conn:
             row = conn.execute(
                 "SELECT * FROM conversations WHERE character_name = ? ORDER BY rowid DESC LIMIT 1",
@@ -209,6 +211,7 @@ class ChatStore:
         tool_call_id: Optional[str] = None,
         token_count: int = 0,
     ) -> int:
+        self._log("SQLITE", f"add_message conv={conversation_id[:8]} role={role} content='{(content or '')[:50]}'")
         with self._tx() as conn:
             # message_index auto dentro del branch
             last_idx = conn.execute(
@@ -295,6 +298,7 @@ class ChatStore:
     def get_active_branch_messages(
         self, conversation_id: str, branch_id: str, leaf_id: int, limit: int = 50
     ) -> list[ChatMessage]:
+        self._log("SQLITE", f"get_active_branch_messages conv={conversation_id[:8]} branch={branch_id} leaf={leaf_id}")
         """Retorna los mensajes activos del camino hasta leaf_id,
         hasta `limit` desde el final."""
         path = self.get_message_path(leaf_id)
@@ -362,6 +366,7 @@ class ChatStore:
         topic: str = "",
         reason: str = "interval",
     ) -> int:
+        self._log("SQLITE", f"add_summary conv={conversation_id[:8]} reason={reason}")
         with self._tx() as conn:
             now = datetime.now(timezone.utc).isoformat()
             conn.execute(

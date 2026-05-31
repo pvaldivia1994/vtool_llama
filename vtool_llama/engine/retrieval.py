@@ -28,6 +28,7 @@ class RetrievalStrategy(ABC):
         branch_id: str,
         leaf_message_id: int,
         budget: int,
+        **kwargs,   # ← v9: acepta user_prompt sin romper implementaciones
     ) -> PromptSection:
         ...
 
@@ -47,6 +48,7 @@ class RecentMessagesStrategy(RetrievalStrategy):
         branch_id: str,
         leaf_message_id: int,
         budget: int,
+        **kwargs,
     ) -> PromptSection:
         path = store.get_active_branch_messages(
             conversation_id, branch_id, leaf_message_id, limit=self._max_messages
@@ -82,10 +84,12 @@ class SemanticRetrievalStrategy(RetrievalStrategy):
     """Retrieval semántico desde ChromaDB (conversation chunks manuales).
     Solo activo si hay chroma_store configurado."""
 
-    def __init__(self, chroma_store=None, min_similarity: float = 0.3, priority: int = 20):
+    def __init__(self, chroma_store=None, min_similarity: float = 0.5,
+                 rag_budget: int = 300, priority: int = 20):
         super().__init__(priority=priority)
         self._chroma_store = chroma_store
         self._min_similarity = min_similarity
+        self._rag_budget = rag_budget
 
     def retrieve(
         self,
@@ -95,14 +99,20 @@ class SemanticRetrievalStrategy(RetrievalStrategy):
         branch_id: str,
         leaf_message_id: int,
         budget: int,
+        **kwargs,
     ) -> PromptSection:
         if not self._chroma_store or not self._chroma_store.is_available:
             return PromptSection(type="semantic", priority=self.priority, tokens=0, messages=[])
 
-        # Obtener los últimos 3 mensajes como contexto para la query semántica
-        path = store.get_active_branch_messages(conversation_id, branch_id, leaf_message_id, limit=3)
-        query_parts = [m.content for m in path if m.content]
-        query = " ".join(query_parts) if query_parts else ""
+        # v9: user_prompt como query primaria, fallback a últimos 3 mensajes
+        user_prompt = kwargs.get("user_prompt", "")
+        if user_prompt:
+            query = user_prompt[:500]
+        else:
+            path = store.get_active_branch_messages(
+                conversation_id, branch_id, leaf_message_id, limit=3
+            )
+            query = " ".join(m.content for m in path if m.content)
 
         if not query:
             return PromptSection(type="semantic", priority=self.priority, tokens=0, messages=[])
@@ -119,16 +129,18 @@ class SemanticRetrievalStrategy(RetrievalStrategy):
 
         lines: list[str] = []
         running = 0
+        # v9: presupuesto fijo para RAG, no usar el budget general
+        rag_limit = min(self._rag_budget, budget)
 
         for r in results:
-            # Filtrar por similaridad mínima para evitar falsos positivos irrelevantes
+            # Filtrar por similaridad mínima
             if r.get("similarity", 0.0) < self._min_similarity:
                 continue
             doc = r.get("document", "")
             if not doc:
                 continue
             tokens = token_counter.count_text(doc)
-            if running + tokens > budget and running > 0:
+            if running + tokens > rag_limit and running > 0:
                 break
             lines.append(doc)
             running += tokens

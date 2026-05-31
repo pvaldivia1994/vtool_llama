@@ -38,6 +38,7 @@ class ContextBuilder:
         leaf_message_id: int,
         token_budget: int,
         system_prompt: str = "",
+        user_prompt: str = "",   # ← v9: para retrieval semántico
     ) -> list[PromptSection]:
         sections: list[PromptSection] = []
 
@@ -65,6 +66,7 @@ class ContextBuilder:
                 branch_id,
                 leaf_message_id,
                 remaining,
+                user_prompt=user_prompt,   # ← v9
             )
             if section.messages:
                 sections.append(section)
@@ -79,10 +81,12 @@ class ContextBuilder:
         leaf_message_id: int,
         token_budget: int,
         system_prompt: str = "",
+        user_prompt: str = "",
     ) -> list[dict]:
         """Wrapper que retorna directamente list[dict] para el LLM."""
         sections = self.build(
-            conversation_id, branch_id, leaf_message_id, token_budget, system_prompt
+            conversation_id, branch_id, leaf_message_id, token_budget,
+            system_prompt, user_prompt=user_prompt,
         )
         messages: list[dict] = []
         for s in sections:

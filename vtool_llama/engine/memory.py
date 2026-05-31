@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 from .base import VToolLlama
-from ..types import Message
+from ..types import Message, ConfigSchema
 
 
 SUMMARY_MARKER = "[RESUMEN DE CONVERSACION PREVIA]"
@@ -119,6 +119,37 @@ def trim_memory(self: VToolLlama) -> int:
         return 0
 
 VToolLlama.trim_memory = trim_memory
+
+
+def _archive_to_chroma(self: VToolLlama, messages: list[Message]) -> bool:
+    """Guarda mensajes crudos en archived_memory (v9).
+    Síncrono — retorna True si TODOS se guardaron correctamente.
+    Si falla, el trim NO debe continuar."""
+    archived = getattr(self, "_archived_chroma", None)
+    if not archived or not archived.is_available:
+        return False
+    try:
+        for msg in messages:
+            if not msg.content or not msg.content.strip():
+                continue
+            msg_id = getattr(msg, 'id', '0')
+            doc_id = f"archived_{msg_id}"
+            archived.add_document(
+                doc_id=doc_id,
+                document=f"[{msg.role}]: {msg.content}",
+                metadata={
+                    "type": "archived",
+                    "role": msg.role,
+                    "conversation_id": self._memory._conversation_id or "",
+                    "message_id": msg.id,
+                },
+            )
+        return True
+    except Exception as e:
+        self._log_debug("MEMORY", f"Error archivando en ChromaDB: {e}")
+        return False
+
+VToolLlama._archive_to_chroma = _archive_to_chroma
 
 
 def _auto_trim_if_needed(self: VToolLlama) -> None:
@@ -250,7 +281,7 @@ def _auto_trim_if_needed(self: VToolLlama) -> None:
         current_tokens=_count_current(),
         max_tokens=self._config.n_ctx,
         reserve_tokens=self._config.context_reserve_tokens,
-        threshold_percent=30.0,
+        threshold_percent=80.0,
     ):
         return
 
@@ -265,11 +296,31 @@ def _auto_trim_if_needed(self: VToolLlama) -> None:
         if msg.role != "system" and i != last_user_index and not _is_digest_message(msg)
     ]
 
-    digest = ""
+    # ── v9: archivar mensajes crudos en ChromaDB (síncrono) ─────────
+    archived_ok = False
     if len(digest_candidates) > 2:
-        digest = _digest_with_llm(digest_candidates)
-    # El core sobrevive al digest gracias a reset_keep()
-    # (ya no necesitamos save_state/load_state)
+        archived_ok = self._archive_to_chroma(digest_candidates)
+        if not archived_ok:
+            self._archive_retries += 1
+            self._log_debug("MEMORY", f"ChromaDB no disponible para archivar "
+                            f"(intento {self._archive_retries})")
+        else:
+            self._archive_retries = 0
+            # Watermark en SQLite
+            if self._chat_store and self._memory._conversation_id:
+                archived_ids = [getattr(msg, 'id', None) for msg in digest_candidates if getattr(msg, 'id', None)]
+                if archived_ids:
+                    self._chat_store.update_archived_watermark(
+                        self._memory._conversation_id, archived_ids
+                    )
+
+    # Forzar trim si se excedieron los reintentos
+    max_retries = getattr(self._config, "memory_archive_max_retries", 3)
+    if not archived_ok and self._archive_retries >= max_retries:
+        self._log_warning("ChromaDB no responde tras varios intentos. Forzando trim sin archivar.")
+
+    # ── Digest extractivo SOLO (sin LLM) ─────────────────────────────
+    digest = _fallback_digest(digest_candidates) if digest_candidates else ""
 
     if digest:
         history = self.get_chat_history(limit=100, include_context=False)
@@ -312,13 +363,19 @@ def _auto_trim_if_needed(self: VToolLlama) -> None:
             current_tokens=_count_current(),
             max_tokens=self._config.n_ctx,
             reserve_tokens=self._config.context_reserve_tokens,
-            threshold_percent=30.0,
+            threshold_percent=80.0,
         ):
             break
 
         for i, msg in enumerate(self._memory._messages):
             if msg.role != "system" and i != last_user_index:
                 removed = self._memory._messages[i]
+                # Archivar si no estaba en digest_candidates (v9)
+                removed_id = getattr(removed, 'id', None)
+                if removed_id is not None and not any(
+                    getattr(m, 'id', None) == removed_id for m in digest_candidates
+                ):
+                    self._archive_to_chroma([removed])
                 del self._memory._messages[i]
                 if last_user_index is not None and i < last_user_index:
                     last_user_index -= 1

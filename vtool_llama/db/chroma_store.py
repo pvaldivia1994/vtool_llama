@@ -95,6 +95,7 @@ class ChromaStore:
     def search(self, query: str, top_k: int = 5, where: Optional[dict] = None) -> List[Dict]:
         """Busqueda semantica de documentos."""
         if not self.is_available:
+            self._log(f"[CHROMA] {self._collection_name}: ChromaDB no disponible")
             return []
         try:
             kwargs = {
@@ -103,6 +104,10 @@ class ChromaStore:
             }
             if where:
                 kwargs["where"] = where
+                self._log(f"[CHROMA] {self._collection_name}: query='{query[:80]}...' where={where}")
+            else:
+                self._log(f"[CHROMA] {self._collection_name}: query='{query[:80]}...' (sin filtro)")
+
             results = self._collection.query(**kwargs)
 
             docs_list = []
@@ -112,15 +117,21 @@ class ChromaStore:
             dists = results.get("distances", [[]])[0]
 
             for i in range(len(ids)):
+                similarity = 1.0 - dists[i] if i < len(dists) else 0.0
                 docs_list.append({
                     "id": ids[i],
                     "document": docs[i] if i < len(docs) else "",
                     "metadata": metas[i] if i < len(metas) else {},
-                    "similarity": 1.0 - dists[i] if i < len(dists) else 0.0,
+                    "similarity": similarity,
                 })
+                self._log(f"[CHROMA] {self._collection_name}: resultado #{i} sim={similarity:.3f} id={ids[i]} doc='{(docs[i] or '')[:60]}...'")
+
+            if not docs_list:
+                self._log(f"[CHROMA] {self._collection_name}: sin resultados")
+
             return docs_list
         except Exception as e:
-            self._log(f"WARN: Error en busqueda ChromaDB ({self._collection_name}): {e}")
+            self._log(f"[CHROMA] {self._collection_name}: Error en busqueda: {e}")
             return []
 
     def clear(self) -> None:
@@ -133,6 +144,15 @@ class ChromaStore:
                 self._collection.delete(ids=existing["ids"])
         except Exception:
             pass
+
+    def delete_ids(self, ids: list[str]) -> None:
+        """Elimina documentos específicos por ID."""
+        if not self.is_available or not ids:
+            return
+        try:
+            self._collection.delete(ids=ids)
+        except Exception as e:
+            self._log(f"WARN: Error eliminando documentos de ChromaDB: {e}")
 
     def get_all_documents(self) -> list[dict]:
         """Retorna todos los documentos de la colección."""
