@@ -134,14 +134,17 @@ def _archive_to_chroma(self: VToolLlama, messages: list[Message]) -> bool:
                 continue
             msg_id = getattr(msg, 'id', '0')
             doc_id = f"archived_{msg_id}"
+            # v13: usar [SPEAK] como tag universal para mensajes archivados
+            speaker_tag = "PLAYER" if msg.role == "user" else "AGENT"
             archived.add_document(
                 doc_id=doc_id,
-                document=f"[{msg.role}]: {msg.content}",
+                document=f"[{speaker_tag}][SPEAK] {msg.content}",
                 metadata={
                     "type": "archived",
                     "role": msg.role,
+                    "speaker_tag": speaker_tag,
                     "conversation_id": self._memory._conversation_id or "",
-                    "message_id": msg.id,
+                    "message_id": getattr(msg, 'id', 0),
                 },
             )
         return True

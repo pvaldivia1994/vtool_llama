@@ -21,6 +21,7 @@ class ChatMessage:
     tool_call_id: Optional[str] = None
     status: str = "active"
     token_count: int = 0
+    speaker_tag: str = ""
     created_at: str = ""
 
 

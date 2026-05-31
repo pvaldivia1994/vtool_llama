@@ -463,6 +463,26 @@ def _cmd_clean(self: VToolLlama, args: str) -> str:
 VToolLlama._cmd_clean = _cmd_clean
 
 
+def _cmd_tag(self: VToolLlama, args: str) -> str:
+    """Cambia el tag del usuario para la sesión actual.
+    Uso: /tag <NOMBRE>
+    Ejemplo: /tag LIU  → los mensajes se etiquetan como [LIU][SPEAK/ACT]"""
+    tag = args.strip().upper()
+    if not tag or not tag.isalpha():
+        return "Uso: /tag <NOMBRE> (ej: /tag LIU). Solo letras, sin espacios."
+    tag = tag[:8]  # max 8 chars
+    self._user_tag = tag
+    # Persistir en SQLite si hay store
+    if getattr(self, "_chat_store", None) and getattr(self._memory, "_conversation_id", None):
+        try:
+            self._chat_store.set_state(self._memory._conversation_id, "user_tag", tag)
+        except Exception:
+            pass
+    return f"Tag de usuario cambiado a [{tag}]. Tus mensajes se etiquetarán como [{tag}][SPEAK] o [{tag}][ACT]."
+
+VToolLlama._cmd_tag = _cmd_tag
+
+
 def _cmd_config(self: VToolLlama, args: str) -> str:
     import json
     from dataclasses import asdict

@@ -29,12 +29,12 @@ compile_static_prompt()
   ├── 16. [ROLEPLAY MODE]           ← roleplay_mode.yaml
   ├── 17. [CONTEXT DEFINITIONS]     ← Orquestador context definitions
   ├── 18. [FEW SHOT EXAMPLES]       ← 14_few_shot.md
+  ├── 19. [GUÍA DE TAGS]            ← tags.py TAG_DEFINITIONS (v13)
   └── Estáticos de Soul y creencias
 
 compile_dynamic_prompt()
-  ├── 1. [RELATIONSHIP]             ← 13_relationship.md
-  ├── 2. [EMOTIONAL STATE]          ← 11_state.md
-  └── Mods, memoria a largo plazo, episodios, psicología y expresión (persona)
+  └── 1. [STATE]                    ← emoción actual (v13, antes [CONTEXT][CHARACTER])
+  └── 2. [STATE]                    ← relación si hay dinámicas (v13)
 ```
 
 ## Archivos del Subpackage

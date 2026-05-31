@@ -10,10 +10,26 @@ Las activas se inyectan en el próximo turno. Las entregadas pasan al historial 
 orquestador/
 ├── __init__.py              # Barrel
 ├── context_injector.py      # CRUD de entradas de contexto
-└── strategies.py            # ContextInjectionStrategy para ContextBuilder
+├── strategies.py            # ContextInjectionStrategy para ContextBuilder
+└── tags.py                  # Sistema unificado de tags semánticos (v13)
 ```
 
 ## Archivos
+
+### `tags.py` — Sistema de Tags (v13)
+
+Define la taxonomía unificada de tags semánticos.
+
+| Tag | Nivel | Uso |
+|-----|-------|-----|
+| `[DEFINE]` | Sistema | Definición permanente del personaje |
+| `[STATE]` | Sistema | Estado emocional/relacional actual |
+| `[SCENE]` | Sistema | Descripción de escena |
+| `[ID][SPEAK]` | Diálogo | Cuando un personaje HABLA |
+| `[ID][ACT]` | Acción | Cuando un personaje ACTÚA |
+| `[ID][THOUGHT]` | Pensamiento | Pensamiento interno del personaje |
+
+`TAG_DEFINITIONS` contiene la guía completa que se inyecta en `base_prompt.yaml`.
 
 ### `context_injector.py` — ContextInjector
 

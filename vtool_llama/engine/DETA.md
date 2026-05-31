@@ -46,6 +46,9 @@ Define `VToolLlama`, la clase principal. Constructor inicializa todos los gestor
 | `semantic_saving` (property) | `True` si se está indexando en ChromaDB |
 | `loading` (property) | `True` si hay una carga de personaje en curso |
 | `get_tool_stats() → dict` | Métricas de tools del `ToolExecutionManager` |
+| `_user_tag` (property) | Tag del usuario para mensajes (default: `PLAYER`, cambiable con `/tag`) |
+| `_debug_logger` | Logger de depuración por personaje (`character_log.md`) |
+| `_archive_retries` | Contador de reintentos de archive en ChromaDB |
 | `checkout(branch_id, leaf_message_id)` | Rollback no destructivo a un punto del historial |
 | `delete_message(message_id)` | Soft-delete de un mensaje |
 | `regenerate_response(message_id, label="") → str` | Crea branch desde un mensaje y checkout |
@@ -59,16 +62,16 @@ Define `VToolLlama`, la clase principal. Constructor inicializa todos los gestor
  
 | Método | Rol |
 |--------|-----|
-| `chat(prompt, ...)` | Chat sincrónico con loop de Auto-Tools (hasta 3 iteraciones): inyecta contexto Soul + ChatMemory, inyecta estado dinámico actual, genera, maneja tool calls, coercion retry, drift detection y ejecuta auto-indexado incremental |
-| `stream_chat(prompt, ...)` | Streaming con `StreamPostProcessor` para intercepción de tools en vuelo e indexado incremental al final |
-| `chat_with_thinking(prompt, ...)` | Soporte `reasoning_content` nativo + parseo de `<think>`. Si `disable_thinking=true` en config, delega a `chat()` |
-| `stream_chat_with_thinking(prompt, ...)` | Streaming con detección de `<think>`. Si `disable_thinking=true`, delega a `stream_chat()` |
+| `chat(prompt, ...)` | Chat sincrónico con tags `[ID][SPEAK/ACT]`. Las respuestas del modelo pasan por `_split_tagged_response()` para separar acción+diálogo |
+| `stream_chat(prompt, ...)` | Streaming con tags de identidad y split de acción+diálogo |
+| `chat_with_thinking(prompt, ...)` | Soporte `reasoning_content` nativo + tags semánticos |
+| `stream_chat_with_thinking(prompt, ...)` | Streaming con thinking + tags |
 | `add_tool_message(content, id)` | Agrega respuesta de herramienta al historial y la persiste en SQLite |
-| `_inject_dynamic_state_into_messages(messages)` | Inyecta un mensaje system temporal con emociones, relaciones y mods dinámicos justo antes del mensaje del usuario |
-| `_inject_soul_context_into_messages(messages, prompt)` | Inyecta recuerdos del Soul System |
-| `_inject_chat_memory_into_messages(messages, prompt)` | Inyecta turnos pasados relevantes desde ChromaDB |
-| `_apply_emotional_trigger(prompt)` | Trigger emocional Psychology Engine |
-| `_feed_response_to_drift_detector(response)` | Feedback loop de deriva |
+| `_get_inference_messages()` | Construye mensajes con tags `[ID][SPEAK/ACT]`. Detecta multi-personaje: `[ROBERTO] texto` → `[ROBERTO][SPEAK] texto` |
+| `_split_tagged_response(text)` | Post-procesa respuestas separando `[ACT] *acción* diálogo` en líneas independientes (v13) |
+| `_inject_dynamic_state_into_messages(messages)` | Inyecta `[STATE]` con emoción/relación actual (solo si `inject_dynamic_state=true`) |
+| `_inject_tool_policy_if_needed(messages, prompt)` | Inyecta política de tools como mensaje system dinámico |
+| `_log_debug_turn(prompt, messages, response)` | Log de depuración a `character_log.md` |
 | `_on_stream_tool_detected(name, args)` | Callback del StreamPostProcessor |
 | `_reconstruct_tool_calls(chunks)` | Reconstruye tool calls desde chunks de stream |
  
@@ -108,8 +111,11 @@ El fallback textual se controla con `enable_text_tool_fallback`. La ejecucion in
  | `remove_mod(mod_id)` | Elimina un mod |
  | `rebuild_personality_state()` | Reconstruye personalidad desde historial + guarda base_prompt.yaml |
  | `_warmup_character_cache(prompt)` | Compila prompt estático completo → guarda `base_prompt.yaml` → warmup total → mide `n_keep` (tokens del core) → guarda `base.state` + `n_keep` en meta. Al cargar, restaura `_n_keep` desde meta para que `reset_keep()` proteja el core (v6) |
- | `_inject_personality_into_system_prompt()` | Inyecta únicamente el prompt de sistema ESTABLE del personaje (sin TOOL_USAGE_POLICY). Se llama solo en load_character() y cuando se restaura el prompt tras trim/episode. El core del KV cache se mantiene estable entre turnos (v6+v7) |
-| `_inject_tool_policy_if_needed(messages, user_prompt)` | Inyecta `TOOL_USAGE_POLICY` como mensaje `system` dinámico antes del último `user` solo si hay tools activas. NO modifica el core del KV cache (v7) |
+ | `_inject_personality_into_system_prompt()` | Inyecta únicamente el prompt de sistema ESTABLE del personaje (sin TOOL_USAGE_POLICY). Se llama solo en load_character() y cuando se restaura el prompt tras trim/episode |
+| `_inject_tool_policy_if_needed(messages, user_prompt)` | Inyecta `TOOL_USAGE_POLICY` como mensaje `system` dinámico antes del último `user` solo si hay tools activas |
+| `_index_character_core()` | Indexa secciones del personaje en ChromaDB con tags `[DEFINE][*]` (identidad, background, traits, reglas, speech) |
+| `_archive_to_chroma(messages)` | Archiva mensajes en ChromaDB con formato `[speaker_tag][SPEAK] contenido` |
+| `_warmup_character_cache(prompt)` | Compila prompt, warmup KV cache, mide n_keep, llama a `_index_character_core()` |
  | `_check_and_rebuild_if_needed()` | Rebuild automático antes del chat si hay memorias nuevas |
  
  ### `memory.py` — Memoria y Episodios
@@ -165,18 +171,13 @@ Ring buffer en RAM con `deque(maxlen=chat_memory_limit+1)`. Cada `append()` veri
 
 ### `memory.py` — Trim y Context Digest
 
-El trim automatico es una proteccion obligatoria del pipeline. La clave `auto_trim_context` puede seguir existiendo en config por compatibilidad, pero `_auto_trim_if_needed()` no debe depender de ella para decidir si protege el contexto.
+El trim se activa al **80%** del `effective_limit` (v12 fix: antes era 30%, lo que causaba trims prematuros). Cuando se activa:
 
-Cuando el contexto se acerca al limite efectivo (`n_ctx - context_reserve_tokens`), el flujo actual:
-
-1. Cuenta tokens sobre `ChatMemory.get_context_messages()` usando `ModelManager.count_messages_tokens()` si esta disponible.
-2. Protege siempre el ultimo mensaje `user`.
-3. Toma como candidatos solo mensajes no-system que pueden salir del contexto.
-4. Genera un `context digest` estructurado con `ModelManager.generate(...)`.
-5. Guarda/restaura KV cache con `save_state/load_state` si el backend lo soporta.
-6. Inserta un unico bloque system `[RESUMEN DE CONVERSACION PREVIA]` y elimina digests anteriores.
-7. Guarda el digest en SQLite con `ChatStore.add_summary(..., reason="trim")`.
-8. Recorta mensajes antiguos hasta volver al presupuesto.
+1. Archiva los mensajes candidatos en ChromaDB via `_archive_to_chroma()` con formato `[speaker_tag][SPEAK]` (v9+v13).
+2. Genera un `context digest` extractivo (sin LLM, usa `_fallback_digest`).
+3. Inserta un unico bloque system `[RESUMEN DE CONVERSACION PREVIA]`.
+4. Guarda el digest en SQLite.
+5. Recorta mensajes antiguos hasta volver al presupuesto.
 
 El digest no es un resumen narrativo; es memoria operacional en secciones fijas: hechos estables, estado actual, preferencias, relacion y tono, hilos abiertos y descarte.
 
@@ -274,9 +275,13 @@ Sigue siendo un ring buffer en RAM, pero ahora puede sincronizar con SQLite:
 | Método nuevo | Rol |
 |---|---|
 | `bind_store(store, builder, counter, conv_id, branch, leaf)` | Vincula al SQLite event store |
-| `load_context(token_budget)` | Reconstruye el buffer desde ContextBuilder |
-| `add_user_message(content)` | También persiste en SQLite + actualiza active_leaf |
-| `add_assistant_message(content, tool_calls)` | También persiste en SQLite + actualiza active_leaf |
+| `load_context(token_budget)` | Reconstruye el buffer desde ContextBuilder (usa maxlen del deque, no `_history_limit`) |
+| `add_user_message(content, speaker_tag="")` | Persiste en SQLite con `speaker_tag` (v13) |
+| `add_assistant_message(content, tool_calls, speaker_tag="")` | Persiste en SQLite con `speaker_tag` |
+| `set_archive_callback(callback)` | Callback para archivar mensajes cuando rotan del deque (v12) |
+| `_archive_oldest_if_full()` | Archiva el mensaje más antiguo antes de que el deque lo rote |
+
+**Fix v12**: El deque ahora usa `history_limit` (default 40, maxlen=42) en vez de `chat_memory_limit` (5). Esto permite ~20 turnos de conversación antes de rotar mensajes viejos.
 
 ## Dependencias
 

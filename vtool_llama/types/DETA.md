@@ -24,7 +24,7 @@ Barrel. Importa y re-exporta los 24 tipos desde los 3 submódulos. No define nad
 | `Message` | `role`, `content`, `tool_calls`, `tool_call_id` | Historial de chat en formato OpenAI |
 | `ModelInfo` | `model_name`, `context_size`, `gpu_layers`, `estimated_vram_gb`, `loaded` | Metadatos del modelo GGUF cargado |
 | `GenerationStats` | `prompt_tokens`, `completion_tokens`, `tokens_per_second`, `duration_ms` | Estadísticas de cada inferencia |
-| `ConfigSchema` | ~30 campos: `n_ctx`, `temperature`, `gpu_layers`, `chat_memory_limit`, `disable_thinking`, `semantic_memory_enabled`, etc. | Esquema del `config.json` |
+| `ConfigSchema` | ~35 campos: `n_ctx`, `temperature`, `gpu_layers`, `history_limit`, `disable_thinking`, `semantic_memory_enabled`, `inject_dynamic_state`, `expand_n_ctx_for_core`, `user_tag`, etc. | Esquema del `config.json` |
 
 ### `character.py` — Tipos del Character System
 

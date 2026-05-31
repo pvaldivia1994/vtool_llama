@@ -139,6 +139,9 @@ class CharacterCompiler:
         # 23. [FEW SHOT EXAMPLES]
         self._try_add(parts, self._resolve_few_shot_examples())
 
+        # v13: [GUÍA DE TAGS] — definiciones de tags semánticos
+        self._try_add(parts, self._resolve_tag_guide())
+
         # Capas estáticas de Soul
         self._try_add(parts, self._resolve_soul())
         self._try_add(parts, self._resolve_beliefs_contradictions())
@@ -226,20 +229,19 @@ class CharacterCompiler:
         if not self.manager.is_loaded:
             return ""
 
-        # v10: solo incluir capas que aporten valor narrativo.
-        # Usar tags [CONTEXT][*] del orquestador, ya definidos en base_prompt.yaml.
+        # v13: tags [STATE] unificados
         parts = []
 
-        # [CONTEXT][CHARACTER] — emoción actual (si no es neutral)
+        # [STATE] — emoción actual (si no es neutral)
         emotion = self.manager.runtime_state.current_emotion
         if emotion and emotion != "neutral":
-            parts.append(f"[CONTEXT][CHARACTER] Currently feeling {emotion}.")
+            parts.append(f"[STATE] Currently feeling {emotion}.")
 
-        # [CONTEXT][RELATIONSHIP] — solo si hay dinámicas relevantes
+        # [STATE][RELATIONSHIP] — solo si hay dinámicas relevantes
         rel = self.manager.relationship_state
         if rel.dynamics and len(rel.dynamics) > 0:
             dynamics_text = rel.dynamics[0][:200]
-            parts.append(f"[CONTEXT][RELATIONSHIP] {dynamics_text}")
+            parts.append(f"[STATE] {dynamics_text}")
 
         # NO incluir:
         # - _resolve_psychology() → scores Big Five, el modelo no los entiende
@@ -393,6 +395,38 @@ class CharacterCompiler:
                     text = text.replace("#NAME", name)
                 return text.strip()
         return ""
+
+    def _resolve_tag_guide(self) -> str:
+        """Retorna la guía de tags semánticos (v13)."""
+        name = self.manager.identity.name or "Character"
+        name_upper = name.upper()
+        return (
+            "[GUÍA DE TAGS]\n\n"
+            "Each message is tagged to indicate who is speaking and what type of content it is.\n\n"
+            "[DEFINE] Permanent character definition: identity, rules, history, and behavior.\n"
+            "[STATE] Current emotional, relational, and psychological state.\n"
+            "[SCENE] Current scene, location, environment, time, and world events.\n\n"
+            f"[{name_upper}] is YOUR tag. Messages tagged with [{name_upper}] are YOUR responses.\n"
+            "When you see [SPEAK] you are speaking dialogue.\n"
+            "When you see [ACT] you are performing a physical action.\n"
+            "When you see [THOUGHT] you are thinking internally.\n\n"
+            "IMPORTANT: Always separate action from speech into different tagged lines.\n"
+            "If you perform an action AND speak, use TWO lines:\n\n"
+            "Correct:\n"
+            f"  [{name_upper}][ACT] *Looks down nervously*\n"
+            f"  [{name_upper}][SPEAK] I am fine, thank you.\n\n"
+            "Also correct (only action or only speech):\n"
+            f"  [{name_upper}][ACT] *Bows respectfully*\n"
+            f"  [{name_upper}][SPEAK] Yes, sir.\n\n"
+            "Incorrect (never mix action and speech in one line):\n"
+            f"  [{name_upper}][ACT] *Looks down* I am fine.    ← WRONG\n\n"
+            "Examples:\n"
+            f"  [PLAYER][SPEAK] Hello, how are you?         → User speaks\n"
+            f"  [{name_upper}][ACT] *Looks down*              → You act\n"
+            f"  [{name_upper}][SPEAK] I am fine.              → You speak\n"
+            "  [ROBERTO][SPEAK] Get back to work!            → Another speaks\n\n"
+            "You ALWAYS respond as the character. Never break character."
+        )
 
     def compile_base_prompt(self, base_system_prompt: str, config: Optional[ConfigSchema] = None) -> str:
         if not self.manager.is_loaded:

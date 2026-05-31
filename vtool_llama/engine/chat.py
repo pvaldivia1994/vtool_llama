@@ -72,6 +72,41 @@ def _log_debug_turn(self: VToolLlama, prompt: str, messages: list[dict],
 VToolLlama._log_debug_turn = _log_debug_turn
 
 
+def _split_tagged_response(self: VToolLlama, text: str, speaker: str = "") -> str:
+    """Post-procesa la respuesta separando [ACT] + dialogo en lineas (v13)."""
+    import re
+    if not speaker:
+        speaker = self._character_manager.character_name.upper() if self._character_manager.is_loaded else "AGENT"
+    lines = text.split("\n")
+    result = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        # [ID][ACT] *accion* texto_extra
+        m = re.match(r'^\[(\w+)\]\[ACT\]\s+(\*[^*]+\*)\s*(.*)', line)
+        if m:
+            sp = m.group(1)
+            result.append(f"[{sp}][ACT] {m.group(2).strip()}")
+            extra = m.group(3).strip()
+            if extra:
+                result.append(f"[{sp}][SPEAK] {extra}" if not extra.startswith("*") else f"[{sp}][ACT] {extra}")
+            continue
+        # [ID][SPEAK] con asteriscos al inicio
+        m = re.match(r'^\[(\w+)\]\[SPEAK\]\s+(\*[^*]+\*)\s*(.*)', line)
+        if m:
+            sp = m.group(1)
+            result.append(f"[{sp}][ACT] {m.group(2).strip()}")
+            extra = m.group(3).strip()
+            if extra:
+                result.append(f"[{sp}][SPEAK] {extra}")
+            continue
+        result.append(line)
+    return "\n".join(result)
+
+VToolLlama._split_tagged_response = _split_tagged_response
+
+
 def _extract_inline_context(self: VToolLlama, prompt: str) -> str:
     """Extrae [context <tipo> <texto>] del prompt, guarda la entrada
     y retorna el prompt limpio."""
@@ -479,7 +514,7 @@ def chat(
 
                 self._feed_response_to_drift_detector(response_text)
 
-                self._memory.add_assistant_message(content=response_text, tool_calls=None)
+                self._memory.add_assistant_message(content=self._split_tagged_response(response_text), tool_calls=None)
                 self._short_memory.append({"role": "assistant", "content": response_text})
                 self._log_generation_stats()
 
@@ -646,7 +681,7 @@ def stream_chat(
                     continue
 
                 if handled["external_calls"]:
-                    self._memory.add_assistant_message(content=full_response or None, tool_calls=handled["external_calls"])
+                    self._memory.add_assistant_message(content=self._split_tagged_response(full_response or ""), tool_calls=handled["external_calls"])
                     yield {"choices": [{"message": {"tool_calls": handled["external_calls"]}}]}
                     return
 
@@ -670,7 +705,7 @@ def stream_chat(
                         yield {"choices": [{"message": {"tool_calls": text_handled["external_calls"]}}]}
                         return
 
-                self._memory.add_assistant_message(content=full_response or None, tool_calls=None)
+                self._memory.add_assistant_message(content=self._split_tagged_response(full_response or ""), tool_calls=None)
                 if full_response:
                     self._short_memory.append({"role": "assistant", "content": full_response})
 
@@ -753,7 +788,7 @@ def chat_with_thinking(
             # Debug log: mensajes + respuesta
             self._log_debug_turn(prompt, messages, content)
 
-            self._memory.add_assistant_message(full_history_content)
+            self._memory.add_assistant_message(self._split_tagged_response(full_history_content))
             self._log_generation_stats()
             self._auto_save_if_needed()
 
@@ -887,7 +922,7 @@ def stream_chat_with_thinking(
             # Debug log: mensajes + respuesta
             self._log_debug_turn(prompt, messages, full_response)
 
-            self._memory.add_assistant_message(full_response)
+            self._memory.add_assistant_message(self._split_tagged_response(full_response))
             self._log_generation_stats()
             self._auto_save_if_needed()
 

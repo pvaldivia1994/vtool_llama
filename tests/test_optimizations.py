@@ -129,8 +129,8 @@ class TestOptimizations:
         assert "angry" not in static_prompt, "emoción dinámica no debe estar en estático"
         assert "Se siente tensión" not in static_prompt, "relación dinámica no debe estar en estático"
 
-        assert "[CONTEXT][CHARACTER]" in dynamic_prompt
-        assert "[CONTEXT][RELATIONSHIP]" in dynamic_prompt
+        assert "[STATE]" in dynamic_prompt
+        assert "Currently feeling angry" in dynamic_prompt
         assert "STATIC_CORE" not in dynamic_prompt
 
     def test_compiler_reports_tokens_by_prompt_layer(self):

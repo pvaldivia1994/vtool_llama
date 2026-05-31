@@ -148,6 +148,11 @@ class VToolLlama:
         self._archive_retries: int = 0
 
         # ------------------------------------------------------------------
+        # 6f. Tag del usuario para identidad en mensajes (v13)
+        # ------------------------------------------------------------------
+        self._user_tag: str = "PLAYER"
+
+        # ------------------------------------------------------------------
         # 7. Short memory (últimos N mensajes para contexto inmediato)
         # ------------------------------------------------------------------
         self._short_memory: deque[dict] = deque(

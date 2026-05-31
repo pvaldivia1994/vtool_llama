@@ -536,14 +536,13 @@ def _index_character_core(self: VToolLlama) -> None:
     """Indexa secciones clave del personaje en ChromaDB para refuerzo semántico (v11).
 
     Se ejecuta durante load_character() después del warmup.
-    Los documentos usan tags [CHARACTER][*] que el modelo ya conoce.
+    Los documentos usan tags [DEFINE][*] (v13).
     """
     archived = getattr(self, "_archived_chroma", None)
     if not archived or not archived.is_available:
         return
 
     try:
-        # Limpiar índices previos del personaje
         existing = archived.get_all_documents()
         old_ids = [d["id"] for d in existing if d["id"] and str(d["id"]).startswith("charcore_")]
         if old_ids:
@@ -552,52 +551,52 @@ def _index_character_core(self: VToolLlama) -> None:
         manager = self._character_manager
         docs = []
 
-        # [CHARACTER][IDENTITY]
+        # [DEFINE][IDENTITY]
         if manager.identity.name:
             docs.append({
                 "id": "charcore_identity",
                 "document": (
-                    f"[CHARACTER][IDENTITY] Your name is {manager.identity.name}. "
+                    f"[DEFINE][IDENTITY] Your name is {manager.identity.name}. "
                     f"Your role is {manager.identity.role}. "
                     f"Your age is {manager.identity.age}."
                 ),
                 "metadata": {"type": "charcore", "section": "identity"},
             })
 
-        # [CHARACTER][BACKGROUND]
+        # [DEFINE][BACKGROUND]
         if manager.identity.background:
             docs.append({
                 "id": "charcore_background",
-                "document": f"[CHARACTER][BACKGROUND] {manager.identity.background}",
+                "document": f"[DEFINE][BACKGROUND] {manager.identity.background}",
                 "metadata": {"type": "charcore", "section": "background"},
             })
 
-        # [CHARACTER][SCENARIO]
+        # [DEFINE][SCENARIO]
         if manager.identity.scenario:
             docs.append({
                 "id": "charcore_scenario",
-                "document": f"[CHARACTER][SCENARIO] {manager.identity.scenario}",
+                "document": f"[DEFINE][SCENARIO] {manager.identity.scenario}",
                 "metadata": {"type": "charcore", "section": "scenario"},
             })
 
-        # [CHARACTER][TRAITS]
+        # [DEFINE][TRAITS]
         if manager.personality_dna.traits:
             docs.append({
                 "id": "charcore_traits",
-                "document": f"[CHARACTER][TRAITS] {', '.join(manager.personality_dna.traits)}",
+                "document": f"[DEFINE][TRAITS] {', '.join(manager.personality_dna.traits)}",
                 "metadata": {"type": "charcore", "section": "traits"},
             })
 
-        # [CHARACTER][RULES]
+        # [DEFINE][RULES]
         if manager.rules.core_rules:
             rules_text = "\n".join(f"- {r}" for r in manager.rules.core_rules)
             docs.append({
                 "id": "charcore_rules",
-                "document": f"[CHARACTER][RULES]\n{rules_text}",
+                "document": f"[DEFINE][RULES]\n{rules_text}",
                 "metadata": {"type": "charcore", "section": "rules"},
             })
 
-        # [CHARACTER][SPEECH]
+        # [DEFINE][SPEECH]
         if manager.speech.style or manager.speech.tone:
             style = manager.speech.style or "Not specified"
             tone = manager.speech.tone or "Not specified"
@@ -605,7 +604,7 @@ def _index_character_core(self: VToolLlama) -> None:
             docs.append({
                 "id": "charcore_speech",
                 "document": (
-                    f"[CHARACTER][SPEECH] Style: {style}. Tone: {tone}. Verbosity: {verbosity}."
+                    f"[DEFINE][SPEECH] Style: {style}. Tone: {tone}. Verbosity: {verbosity}."
                 ),
                 "metadata": {"type": "charcore", "section": "speech"},
             })

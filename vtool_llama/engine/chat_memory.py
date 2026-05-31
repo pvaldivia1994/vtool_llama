@@ -202,7 +202,7 @@ class ChatMemory:
         self._last_archived_content = content_preview
         self._archive_callback([oldest])
 
-    def add_user_message(self, content: str) -> Optional[int]:
+    def add_user_message(self, content: str, speaker_tag: str = "") -> Optional[int]:
         """Agrega un mensaje del usuario al historial.
         Si hay store vinculado, también persiste en SQLite.
         Retorna el message_id si se persistió, None si no."""
@@ -216,13 +216,14 @@ class ChatMemory:
                 role="user",
                 content=content,
                 parent_id=self._active_leaf_id or None,
+                speaker_tag=speaker_tag,
             )
             self._active_leaf_id = msg_id
             self._store.set_active_leaf(self._conversation_id, self._branch_id, msg_id)
             return msg_id
         return None
 
-    def add_assistant_message(self, content: Optional[str] = None, tool_calls: Optional[list[dict]] = None) -> Optional[int]:
+    def add_assistant_message(self, content: Optional[str] = None, tool_calls: Optional[list[dict]] = None, speaker_tag: str = "") -> Optional[int]:
         """Agrega la respuesta del asistente al historial.
         Si hay store vinculado, también persiste en SQLite.
         Retorna el message_id si se persistió, None si no."""
@@ -238,6 +239,7 @@ class ChatMemory:
                 tool_calls=tool_calls,
                 parent_id=self._active_leaf_id,
                 token_count=self._token_counter.count_text(content) if content and self._token_counter else 0,
+                speaker_tag=speaker_tag,
             )
             self._active_leaf_id = msg_id
             self._store.set_active_leaf(self._conversation_id, self._branch_id, msg_id)

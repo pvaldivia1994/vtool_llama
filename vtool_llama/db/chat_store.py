@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS messages (
     tool_call_id TEXT,
     status TEXT NOT NULL DEFAULT 'active',
     token_count INTEGER DEFAULT 0,
+    speaker_tag TEXT DEFAULT '',
     created_at TEXT NOT NULL,
     FOREIGN KEY (conversation_id) REFERENCES conversations(id)
 );
@@ -143,6 +144,11 @@ class ChatStore:
     def ensure_schema(self) -> None:
         with self._tx() as conn:
             conn.executescript(_SCHEMA_SQL)
+            # Migracion v13: agregar speaker_tag a tablas existentes
+            try:
+                conn.execute("ALTER TABLE messages ADD COLUMN speaker_tag TEXT DEFAULT ''")
+            except Exception:
+                pass  # ya existe
 
     # ------------------------------------------------------------------
     # Conversations
@@ -210,8 +216,9 @@ class ChatStore:
         tool_calls: Optional[list[dict]] = None,
         tool_call_id: Optional[str] = None,
         token_count: int = 0,
+        speaker_tag: str = "",
     ) -> int:
-        self._log("SQLITE", f"add_message conv={conversation_id[:8]} role={role} content='{(content or '')[:50]}'")
+        self._log("SQLITE", f"add_message conv={conversation_id[:8]} role={role} speaker={speaker_tag} content='{(content or '')[:50]}'")
         with self._tx() as conn:
             # message_index auto dentro del branch
             last_idx = conn.execute(
@@ -226,10 +233,10 @@ class ChatStore:
             conn.execute(
                 """INSERT INTO messages
                    (conversation_id, branch_id, message_index, parent_id,
-                    role, content, tool_calls, tool_call_id, token_count, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    role, content, tool_calls, tool_call_id, token_count, speaker_tag, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (conversation_id, branch_id, next_idx, parent_id,
-                 role, content, tool_calls_json, tool_call_id, token_count, now),
+                 role, content, tool_calls_json, tool_call_id, token_count, speaker_tag, now),
             )
             return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
@@ -468,6 +475,29 @@ class ChatStore:
                        last_sync_at = excluded.last_sync_at""",
                 (conversation_id, last_message_id, branch_id, sync_hash, now),
             )
+
+    # ------------------------------------------------------------------
+    # State (key-value store for session state)
+    # ------------------------------------------------------------------
+
+    def set_state(self, conversation_id: str, key: str, value: str) -> None:
+        """Guarda un valor de estado para la conversación."""
+        with self._tx() as conn:
+            conn.execute(
+                """INSERT INTO state (conversation_id, key, value)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(conversation_id, key) DO UPDATE SET value = excluded.value""",
+                (conversation_id, key, value),
+            )
+
+    def get_state(self, conversation_id: str, key: str, default: str = "") -> str:
+        """Lee un valor de estado de la conversación."""
+        with self._tx() as conn:
+            row = conn.execute(
+                "SELECT value FROM state WHERE conversation_id = ? AND key = ?",
+                (conversation_id, key),
+            ).fetchone()
+            return row["value"] if row else default
 
     # ------------------------------------------------------------------
     # Checkout (rollback no destructivo)

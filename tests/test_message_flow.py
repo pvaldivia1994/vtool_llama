@@ -136,9 +136,9 @@ def test_messages_acumulate_in_stream_chat():
             )
 
         ctx = llm._memory.get_context_messages()
-        assert ctx[1]["content"] == "[USER] Hola"
-        assert ctx[3]["content"] == "[USER] Mi nombre es LiuniK"
-        assert "[USER] Tengo un perro llamado Pepe" in [m["content"] for m in ctx], (
+        assert ctx[1]["content"] == "[PLAYER][SPEAK] Hola"
+        assert ctx[3]["content"] == "[PLAYER][SPEAK] Mi nombre es LiuniK"
+        assert "[PLAYER][SPEAK] Tengo un perro llamado Pepe" in [m["content"] for m in ctx], (
             "El mensaje 'Tengo un perro llamado Pepe' debe estar en el contexto"
         )
 
@@ -155,11 +155,11 @@ def test_get_inference_messages_includes_all():
 
         msgs = llm._get_inference_messages()
         assert len(msgs) == 3, f"Esperaba 3 mensajes, tengo {len(msgs)}"
-        assert msgs[1]["content"] == "[USER] Hola"
+        assert msgs[1]["content"] == "[PLAYER][SPEAK] Hola"
 
         llm._memory.add_user_message("Mi nombre es LiuniK")
         llm._memory.add_assistant_message("respuesta 2")
 
         msgs = llm._get_inference_messages()
         assert len(msgs) == 5, f"Esperaba 5 mensajes, tengo {len(msgs)}"
-        assert msgs[3]["content"] == "[USER] Mi nombre es LiuniK"
+        assert msgs[3]["content"] == "[PLAYER][SPEAK] Mi nombre es LiuniK"
