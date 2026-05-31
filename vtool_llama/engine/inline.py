@@ -40,7 +40,7 @@ class InlineProcessor:
 
     def process(self, text: str, llm: VToolLlama) -> list[dict]:
         """Procesa el texto y retorna lista de mensajes.
-        Cada mensaje: {"role": "user", "tag": "SPEAK"|"ACT"|"THOUGHT", "content": str}
+        Cada mensaje: {"role": "user", "tag": "SAYS"|"DOES"|"THINKS", "content": str}
         El contenido NO incluye el tag del speaker — eso lo agrega chat()
         usando _user_tag.
         """
@@ -59,7 +59,7 @@ class InlineProcessor:
         # Paso 5: dividir por *acción* y :pensamiento: boundaries
         segments = self._split_by_markers(segments)
 
-        # Paso 5: armar mensajes con tags SPEAK/ACT/THOUGHT
+        # Paso 5: armar mensajes con tags SAYS/DOES/THINKS
         return self._build_messages(segments)
 
     def _extract_hash(self, text: str, llm: VToolLlama) -> list[str]:
@@ -150,12 +150,13 @@ class InlineProcessor:
         return result if result else segments
 
     def _extract_char_dash(self, segments: list[str], llm: VToolLlama) -> list[str]:
-        """De cada segmento, extrae -texto multi-palabra- → [CONTEXT][CHARACTER].
-        Se inyecta vía ContextInjector como estado del personaje.
+        """De cada segmento, extrae -texto multi-palabra- → [ASSISTANT=Name][THINKS] *texto*.
+        Se inyecta vía ContextInjector como contexto del personaje.
         El -texto- se elimina del mensaje del usuario."""
         if not llm._chat_store or not llm._memory._conversation_id:
             return segments
 
+        name = (llm._character_manager.character_name or "ASSISTANT").capitalize()
         from ..orquestador import ContextInjector
 
         injector = ContextInjector(
@@ -169,8 +170,8 @@ class InlineProcessor:
             for match in CHAR_DASH_PATTERN.finditer(segment):
                 content = match.group(1).strip()
                 if content:
-                    injector.add("character", f"Currently thinking: {content}")
-                    llm._log_debug("INLINE", f"-char- [CONTEXT][CHARACTER] {content}")
+                    injector.add("character", f"[ASSISTANT={name}][THINKS] *{content}*")
+                    llm._log_debug("INLINE", f"-char- [ASSISTANT={name}][THINKS] *{content}*")
                 cleaned = cleaned.replace(match.group(0), "", 1)
             cleaned = cleaned.strip()
             if cleaned:
@@ -181,7 +182,7 @@ class InlineProcessor:
     def _split_by_markers(self, segments: list[str]) -> list[str]:
         """Divide segmentos por *acción* y :pensamiento: boundaries.
         Cada *...* y :...: se convierte en su propio segmento.
-        El texto entre marcadores se mantiene como segmento SPEAK."""
+        El texto entre marcadores se mantiene como segmento SAYS."""
         import re
         # Combina los patrones en uno: busca *...* o :...: o texto entre ellos
         SPLIT_RE = re.compile(r'(\*[^*]+\*|:[^:]+:)')
@@ -197,7 +198,7 @@ class InlineProcessor:
         return result
 
     def _build_messages(self, segments: list[str]) -> list[dict]:
-        """Etiqueta cada segmento como SPEAK/ACT/THOUGHT según su contenido."""
+        """Etiqueta cada segmento como SAYS/DOES/THINKS según su contenido."""
         messages: list[dict] = []
         for seg in segments:
             if not seg.strip():
@@ -212,21 +213,21 @@ class InlineProcessor:
 
     def _tag_segment(self, segment: str) -> tuple[str, str]:
         """Retorna (tag, content_limpio) para un segmento.
-        *acción* → (ACT, *acción*)   preserva *
-        :pensamiento: → (THOUGHT, pensamiento)  limpia :
-        texto normal → (SPEAK, texto)
+        *acción* → (DOES, *acción*)   preserva *
+        :pensamiento: → (THINKS, pensamiento)  limpia :
+        texto normal → (SAYS, texto)
         """
         has_action = bool(ACTION_PATTERN.search(segment))
         has_thought = bool(THOUGHT_PATTERN.search(segment))
 
         if has_action:
-            return ("ACT", segment)
+            return ("DOES", segment)
 
         if has_thought:
             content = THOUGHT_PATTERN.sub(r'\1', segment)
-            return ("THOUGHT", content.strip())
+            return ("THINKS", content.strip())
 
-        return ("SPEAK", segment)
+        return ("SAYS", segment)
 
     def list_commands(self) -> dict[str, str]:
         return {k: v["desc"] for k, v in self._hash_commands.items()}
@@ -305,21 +306,21 @@ def _cmd_hash_thought(args: str, llm: VToolLlama) -> None:
 
 
 def _cmd_hash_char(args: str, llm: VToolLlama) -> None:
-    """#char thought → ContextInjector.add('character', 'Currently thinking: ...')
-    El tag [CONTEXT][CHARACTER] ya está definido en el sistema como
-    estado del personaje — el modelo lo reconoce como propio.
+    """#char thought → ContextInjector.add('character', '[ASSISTANT=Name][THINKS] *...*')
+    Formato literal: el modelo lee "Assistant Luna thinks: ..." como pensamiento propio.
     """
     if not args or not llm._chat_store or not llm._memory._conversation_id:
         return
+    name = (llm._character_manager.character_name or "ASSISTANT").capitalize()
     from ..orquestador import ContextInjector
     inj = ContextInjector(llm._chat_store, llm._memory._conversation_id, llm._memory._branch_id)
-    inj.add("character", f"Currently thinking: {args}")
-    llm._log_debug("INLINE", f"[#char] [CONTEXT][CHARACTER] Currently thinking: {args}")
+    inj.add("character", f"[ASSISTANT={name}][THINKS] *{args}*")
+    llm._log_debug("INLINE", f"[#char] [ASSISTANT={name}][THINKS] *{args}*")
 
 
 def _cmd_hash_tag(args: str, llm: VToolLlama) -> None:
     """#tag NOMBRE → cambia el tag del usuario para la sesión.
-    Ejemplo: #tag LIUNIK# → los mensajes se etiquetan [LIUNIK][SPEAK/ACT/THOUGHT]
+    Ejemplo: #tag LIUNIK# → los mensajes se etiquetan [USER=LIUNIK][SAYS/DOES/THINKS]
     """
     tag = args.strip().upper()
     if not tag or not tag.isalpha():

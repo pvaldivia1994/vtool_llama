@@ -102,7 +102,7 @@ def test_scene_pattern():
     # Single-word → NO match (es personaje)
     assert not SCENE_PATTERN.search("[LUNA]")
     assert not SCENE_PATTERN.search("[ROBERTO]")
-    assert not SCENE_PATTERN.search("[PLAYER]")
+    assert not SCENE_PATTERN.search("[USER]")
 
 
 def test_thought_pattern():
@@ -218,22 +218,22 @@ def test_tag_segment():
 
     # Acción
     tag, content = p._tag_segment("*abre la puerta*")
-    assert tag == "ACT"
+    assert tag == "DOES"
     assert "*abre la puerta*" in content
 
     # Pensamiento (limpia :)
     tag, content = p._tag_segment(":esto es peligroso:")
-    assert tag == "THOUGHT"
+    assert tag == "THINKS"
     assert content == "esto es peligroso"
 
     # Texto normal
     tag, content = p._tag_segment("Hola como estas")
-    assert tag == "SPEAK"
+    assert tag == "SAYS"
     assert content == "Hola como estas"
 
-    # Mixto: acción + texto → ACT
+    # Mixto: acción + texto → DOES
     tag, content = p._tag_segment("*mira* y dice hola")
-    assert tag == "ACT"
+    assert tag == "DOES"
 
 
 def test_build_messages():
@@ -247,9 +247,9 @@ def test_build_messages():
     ])
 
     assert len(msgs) == 3
-    assert msgs[0]["tag"] == "ACT"
-    assert msgs[1]["tag"] == "SPEAK"
-    assert msgs[2]["tag"] == "THOUGHT"
+    assert msgs[0]["tag"] == "DOES"
+    assert msgs[1]["tag"] == "SAYS"
+    assert msgs[2]["tag"] == "THINKS"
     assert msgs[2]["content"] == "esto es peligroso"
 
 
@@ -287,10 +287,10 @@ def test_chat_with_world_command(tmp_path):
 
 
 def test_chat_with_char_thought(tmp_path):
-    """#char pensamiento → debe inyectar [CONTEXT][CHARACTER] Currently thinking: ..."""
+    """#char pensamiento → debe inyectar [ASSISTANT=X][THINKS] *...*"""
     llm = _make_llm(tmp_path)
     llm.chat("Hola #char estoy muy triste# que hago?")
-    assert _check_context_summary(llm, "Currently thinking: estoy muy triste")
+    assert _check_context_summary(llm, "[ASSISTANT=Test][THINKS] *estoy muy triste*")
 
 
 def test_chat_with_action_thought_speak(tmp_path):
@@ -305,9 +305,9 @@ def test_chat_with_action_thought_speak(tmp_path):
     )
     contents = [m.content for m in msgs if m.role == "user"]
 
-    assert any("[ACT]" in c and "Entro sigilosamente" in c for c in contents)
-    assert any("[THOUGHT]" in c and "esto es malo" in c for c in contents)
-    assert any("[SPEAK]" in c and "hay alguien ahi" in c for c in contents)
+    assert any("[DOES]" in c and "Entro sigilosamente" in c for c in contents)
+    assert any("[THINKS]" in c and "esto es malo" in c for c in contents)
+    assert any("[SAYS]" in c and "hay alguien ahi" in c for c in contents)
 
 
 def test_chat_with_bare_scene_context(tmp_path):
@@ -341,7 +341,7 @@ def test_chat_multi_character(tmp_path):
 
 
 def test_user_tag_respected(tmp_path):
-    """_user_tag debe usarse en vez de [USER] hardcodeado."""
+    """_user_tag debe usarse en vez de [USER] hardcodeado, formato [USER=LIU]."""
     llm = _make_llm(tmp_path)
     llm._user_tag = "LIU"
     llm.chat("Hola")
@@ -349,7 +349,7 @@ def test_user_tag_respected(tmp_path):
     # Verificar en _get_inference_messages
     messages = llm._get_inference_messages()
     user_msgs = [m for m in messages if m.get("role") == "user"]
-    assert any("[LIU]" in m["content"] for m in user_msgs)
+    assert any("[USER=LIU]" in m["content"] for m in user_msgs)
 
 
 def test_hash_mem_command(tmp_path):
@@ -383,10 +383,10 @@ def test_mixed_all_commands(tmp_path):
         llm._memory._conversation_id, llm._memory._branch_id
     )
     contents = [m.content for m in msgs if m.role == "user"]
-    assert any("[ACT]" in c and "Entro sigilosamente" in c for c in contents)
-    assert any("[SPEAK]" in c and "hay alguien" in c for c in contents)
-    assert any("[THOUGHT]" in c and "esto es peligroso" in c for c in contents)
-    assert any("[ACT]" in c and "Miro alrededor" in c for c in contents)
+    assert any("[DOES]" in c and "Entro sigilosamente" in c for c in contents)
+    assert any("[SAYS]" in c and "hay alguien" in c for c in contents)
+    assert any("[THINKS]" in c and "esto es peligroso" in c for c in contents)
+    assert any("[DOES]" in c and "Miro alrededor" in c for c in contents)
 
 
 def test_time_parentheses(tmp_path):
@@ -436,28 +436,28 @@ def test_get_inference_messages_uses_user_tag(tmp_path):
 
     messages = llm._get_inference_messages()
     user_msgs = [m for m in messages if m.get("role") == "user"]
-    assert any("[LIU]" in m["content"] for m in user_msgs)
+    assert any("[USER=LIU]" in m["content"] for m in user_msgs)
 
 
 def test_get_inference_messages_multichar(tmp_path):
-    """[ROBERTO] en contenido → debe etiquetar como [ROBERTO][SPEAK]."""
+    """[ROBERTO] en contenido → debe etiquetar como [USER=Roberto][SAYS]."""
     llm = _make_llm(tmp_path)
     llm._user_tag = "PLAYER"
     llm._memory.add_user_message("[ROBERTO] Hola que tal")
 
     messages = llm._get_inference_messages()
     user_msgs = [m for m in messages if m.get("role") == "user"]
-    assert any("[ROBERTO][SPEAK]" in m["content"] for m in user_msgs)
+    assert any("[USER=Roberto][SAYS]" in m["content"] for m in user_msgs)
 
 
 def test_get_inference_messages_pretagged_skipped(tmp_path):
     """Mensajes ya pre-tagueados por InlineProcessor no se duplican."""
     llm = _make_llm(tmp_path)
     llm._user_tag = "LIU"
-    llm._memory.add_user_message("[LIU][ACT] *accion*")
+    llm._memory.add_user_message("[USER=LIU][DOES] *accion*")
 
     messages = llm._get_inference_messages()
     user_msgs = [m for m in messages if m.get("role") == "user"]
-    # No debe tener DOBLE tag (ej: [LIU] [LIU][ACT])
+    # No debe tener DOBLE tag
     for m in user_msgs:
-        assert m["content"].count("[LIU]") <= 1
+        assert m["content"].count("[USER=LIU]") <= 1

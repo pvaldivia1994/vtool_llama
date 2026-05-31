@@ -28,9 +28,9 @@ CONTEXT_TYPES = {
 CONTEXT_DEFINITIONS = {
     "scene": "[SCENE] Current scene, location, present characters, and active events.",
     "character": "[STATE] Current emotional, mental, and physical state of the character.",
-    "thoughts": "[THOUGHT] Private thoughts, intentions, motivations, and internal feelings.",
-    "goals": "[SCENE][GOALS] Active objectives, missions, and desired outcomes.",
-    "player": "[SPEAK] Current action or behavior of the player.",
+    "thoughts": "[THINKS] Private thoughts, intentions, motivations, and internal feelings.",
+
+    "player": "[SAYS] Current action or behavior of the player.",
     "time": "[SCENE][TIME] Time, date, weather, season, and passage of time.",
     "world": "[SCENE][WORLD] Relevant world events, politics, conflicts, and environmental changes.",
     "memory": "[DEFINE][MEMORY] Important long-term facts, relationships, and past events.",

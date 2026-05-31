@@ -23,7 +23,7 @@ from .context_injector import (
 from .strategies import ContextInjectionStrategy, SceneContextStrategy
 from .tags import (
     TAG_DEFINITIONS,
-    SPEAK, ACT, THOUGHT,
+    SAYS, DOES, THINKS,
     DEFINE, STATE, SCENE,
     CONTENT_TAGS, SYSTEM_TAGS,
 )
@@ -33,7 +33,7 @@ __all__ = [
     "ContextEntry", "ContextInjector",
     "ContextInjectionStrategy", "SceneContextStrategy",
     "TAG_DEFINITIONS",
-    "SPEAK", "ACT", "THOUGHT",
+    "SAYS", "DOES", "THINKS",
     "DEFINE", "STATE", "SCENE",
     "CONTENT_TAGS", "SYSTEM_TAGS",
 ]

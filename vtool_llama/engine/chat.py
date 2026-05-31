@@ -15,15 +15,15 @@ from ..tools import (
 
 
 def _get_inference_messages(self: VToolLlama) -> list[dict]:
-    """Retorna los mensajes para inferencia con tags correctos (v15).
+    """Retorna los mensajes para inferencia con tags v17.
 
-    - Usa self._user_tag en vez de [USER] hardcodeado
-    - Detecta multi-personaje: [ROBERTO] texto → [ROBERTO][SPEAK]
+    - Usa self._user_tag → [USER=Tag]
+    - Detecta multi-personaje: [ROBERTO] texto → [USER=Roberto][SAYS]
     - Salta mensajes ya pre-tagueados por InlineProcessor
     """
     import re
     messages = self._memory.get_context_messages()
-    tag = self._user_tag.upper() if self._user_tag else "PLAYER"
+    user = self._user_tag.upper() if self._user_tag else "PLAYER"
 
     for msg in messages:
         if msg.get("role") != "user":
@@ -32,23 +32,23 @@ def _get_inference_messages(self: VToolLlama) -> list[dict]:
         if not content:
             continue
 
-        # Ya pre-tagueado por InlineProcessor (ej: [PLAYER][SPEAK] Hola)
-        if re.match(r'^\[\w+\]\[(?:SPEAK|ACT|THOUGHT)\]', content):
+        # Ya pre-tagueado por InlineProcessor (ej: [USER=LIUNIK][SAYS] Hola)
+        if re.match(r'^\[(?:USER|ASSISTANT)=\w+\]\[(?:SAYS|DOES|THINKS)\]', content):
             continue
 
         # [CONTINUE] es un marcador especial, no un mensaje del jugador
         if content.strip() == "[CONTINUE]":
             continue
 
-        # Multi-personaje: [ROBERTO] texto → [ROBERTO][SPEAK] texto
+        # Multi-personaje: [ROBERTO] texto → [USER=Roberto][SAYS] texto
         m = re.match(r'^\[(\w+)\]\s+(.*)', content)
         if m and m.group(1).isupper() and len(m.group(1)) <= 12:
-            msg["content"] = f"[{m.group(1)}][SPEAK] {m.group(2)}"
+            msg["content"] = f"[USER={m.group(1).capitalize()}][SAYS] {m.group(2)}"
             msg["speaker_tag"] = m.group(1)
             continue
 
-        # Sin tag → asignar el tag del usuario
-        msg["content"] = f"[{tag}][SPEAK] {content}"
+        # Sin tag → [USER=Tag][SAYS]
+        msg["content"] = f"[USER={user}][SAYS] {content}"
 
     return messages
 
@@ -100,33 +100,50 @@ VToolLlama._log_debug_turn = _log_debug_turn
 
 
 def _split_tagged_response(self: VToolLlama, text: str, speaker: str = "") -> str:
-    """Post-procesa la respuesta separando [ACT] + dialogo en lineas (v13)."""
+    """Post-procesa la respuesta separando [DOES] + dialogo en lineas (v17)."""
     import re
     if not speaker:
-        speaker = self._character_manager.character_name.upper() if self._character_manager.is_loaded else "AGENT"
+        speaker = (self._character_manager.character_name or "AGENT").upper()
     lines = text.split("\n")
     result = []
     for line in lines:
         line = line.strip()
         if not line:
             continue
-        # [ID][ACT] *accion* texto_extra
+        # [ASSISTANT=Name][DOES] *accion* texto_extra
+        m = re.match(r'^\[ASSISTANT=(\w+)\]\[DOES\]\s+(\*[^*]+\*)\s*(.*)', line)
+        if m:
+            sp = m.group(1)
+            result.append(f"[ASSISTANT={sp}][DOES] {m.group(2).strip()}")
+            extra = m.group(3).strip()
+            if extra:
+                result.append(f"[ASSISTANT={sp}][SAYS] {extra}")
+            continue
+        # [ASSISTANT=Name][SAYS] con asteriscos al inicio
+        m = re.match(r'^\[ASSISTANT=(\w+)\]\[SAYS\]\s+(\*[^*]+\*)\s*(.*)', line)
+        if m:
+            sp = m.group(1)
+            result.append(f"[ASSISTANT={sp}][DOES] {m.group(2).strip()}")
+            extra = m.group(3).strip()
+            if extra:
+                result.append(f"[ASSISTANT={sp}][SAYS] {extra}")
+            continue
+        # Legacy: [ID][ACT] y [ID][SPEAK] para mensajes antiguos
         m = re.match(r'^\[(\w+)\]\[ACT\]\s+(\*[^*]+\*)\s*(.*)', line)
         if m:
             sp = m.group(1)
-            result.append(f"[{sp}][ACT] {m.group(2).strip()}")
+            result.append(f"[ASSISTANT={sp}][DOES] {m.group(2).strip()}")
             extra = m.group(3).strip()
             if extra:
-                result.append(f"[{sp}][SPEAK] {extra}" if not extra.startswith("*") else f"[{sp}][ACT] {extra}")
+                result.append(f"[ASSISTANT={sp}][SAYS] {extra}")
             continue
-        # [ID][SPEAK] con asteriscos al inicio
         m = re.match(r'^\[(\w+)\]\[SPEAK\]\s+(\*[^*]+\*)\s*(.*)', line)
         if m:
             sp = m.group(1)
-            result.append(f"[{sp}][ACT] {m.group(2).strip()}")
+            result.append(f"[ASSISTANT={sp}][DOES] {m.group(2).strip()}")
             extra = m.group(3).strip()
             if extra:
-                result.append(f"[{sp}][SPEAK] {extra}")
+                result.append(f"[ASSISTANT={sp}][SAYS] {extra}")
             continue
         result.append(line)
     return "\n".join(result)
@@ -452,7 +469,7 @@ def chat(
 
         if inline_messages:
             for msg in inline_messages:
-                tagged = f"[{tag}][{msg['tag']}] {msg['content']}"
+                tagged = f"[USER={tag}][{msg['tag']}] {msg['content']}"
                 self._short_memory.append({"role": "user", "content": tagged})
                 self._memory.add_user_message(
                     tagged, speaker_tag=tag,
@@ -647,7 +664,7 @@ def stream_chat(
 
         if inline_messages:
             for msg in inline_messages:
-                tagged = f"[{tag}][{msg['tag']}] {msg['content']}"
+                tagged = f"[USER={tag}][{msg['tag']}] {msg['content']}"
                 self._short_memory.append({"role": "user", "content": tagged})
                 self._memory.add_user_message(tagged, speaker_tag=tag)
         else:
