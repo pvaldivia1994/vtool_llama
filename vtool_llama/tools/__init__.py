@@ -6,7 +6,7 @@ Exporta:
   - TEXT_TOOL_RE, find_tool_pattern_start
   - parse_text_tool_calls, strip_text_tool_calls
   - execute_text_tool, is_internal_tool
-  - ToolExecutionManager, has_memory_trigger, has_scene_trigger
+  - ToolExecutionManager, has_memory_trigger, get_active_internal_tools
   - StreamPostProcessor
 """
 
@@ -19,7 +19,11 @@ from .parser import (
     execute_text_tool,
     is_internal_tool,
 )
-from .manager import ToolExecutionManager, has_memory_trigger
+from .manager import (
+    ToolExecutionManager,
+    get_active_internal_tools,
+    has_memory_trigger,
+)
 from .stream_processor import StreamPostProcessor
 
 __all__ = [
@@ -33,6 +37,7 @@ __all__ = [
     "execute_text_tool",
     "is_internal_tool",
     "ToolExecutionManager",
+    "get_active_internal_tools",
     "has_memory_trigger",
     "StreamPostProcessor",
 ]

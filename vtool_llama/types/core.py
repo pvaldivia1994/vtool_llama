@@ -71,3 +71,9 @@ class ConfigSchema:
     context_snapshot_debug: bool = False
     chat_template_file: str = ""
     inject_scene_context: bool = False
+    compact_system_prompt: bool = False
+    system_prompt_target_tokens: int = 800
+    system_prompt_max_tokens: int = 1200
+    always_enable_internal_tools: bool = False
+    enable_text_tool_fallback: bool = True
+    enable_stream_tool_execution: bool = False

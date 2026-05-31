@@ -50,7 +50,10 @@ Define `CharacterCompiler` y la API pública.
 |--------|-----|
 | `compile_prompt(base, config)` | Une el bloque estático y dinámico (para compatibilidad hacia atrás) |
 | `compile_static_prompt(base, config)` | Genera el prompt del sistema 100% estático |
+| `compile_full_prompt(base, config)` | Alias explicito del prompt completo estático para auditoria/rebuild |
+| `compile_compact_prompt(base, config)` | Genera una `[CHARACTER CAPSULE]` compacta para runtime |
 | `compile_dynamic_prompt()` | Genera el bloque de estados y mods dinámicos |
+| `get_layer_token_breakdown(base, count_fn, config)` | Diagnostico de tokens por capa: fase, tokens, chars, obligatoriedad y si puede moverse a retrieval |
 | `_resolve_definitions()` | Carga `config/prompts/12_definitions.md` como guía de secciones |
 | `_try_add(parts, block)` | Agrega bloque si no está vacío |
 
@@ -104,8 +107,12 @@ Incluye `_render_template()` que carga templates `.md` numerados desde `config/p
 |--------|------------|-----|
 | `helpers/context_digest_system.md` | `engine/memory.py` | System prompt tecnico para comprimir contexto |
 | `helpers/context_digest_user.md` | `engine/memory.py` | Template user con placeholder `#SOURCE` para la conversacion a comprimir |
+| `helpers/character_capsule_system.md` | futuro compactador LLM | System prompt tecnico para generar capsulas compactas |
+| `helpers/character_capsule_user.md` | futuro compactador LLM | Template user con `#SOURCE` y `#TARGET_TOKENS` |
 
 Convencion recomendada: instrucciones tecnicas internas en ingles para mejorar obediencia del modelo, salida solicitada en espanol cuando el resultado vuelve al contexto conversacional del personaje.
+
+`LAYER_POLICIES` define para cada capa si es obligatoria (`required`), candidata a moverse a retrieval (`movable`) y si entra en el prompt compacto (`compact`). Esta tabla alimenta el diagnostico de tokens y evita que la estrategia compacta diverja del reporte.
 
 ## Sistema de Resolución de Conflictos
 

@@ -2,11 +2,11 @@
 StreamPostProcessor — middleware de streaming incremental.
 
 Intercepta tokens del modelo en tiempo real, detecta patrones
-de tool calls (<|tool_call|>, {{...}}, etc.) y separa el output
+de tool calls (`<tool_call>{json}</tool_call>`) y separa el output
 visible del output interno (tool execution).
 
 Esto evita que el usuario vea texto crudo como:
-  <|tool_call>call:store_long_term_memory{...}<tool_call|>
+  <tool_call>{"name":"store_long_term_memory","arguments":{...}}</tool_call>
 
 Modos:
   - content: yield texto seguro al usuario
@@ -26,9 +26,8 @@ from .parser import (
 # PATRONES DE TOOL CALLS EN STREAMING
 # ============================================================
 
-# Tags de apertura y cierre para cada formato
-_TOOL_OPENERS = ("{{", "<|tool_call>", "<tool_call>")
-_TOOL_CLOSERS = ("}}", "<tool_call|>", "</tool_call>")
+_TOOL_OPENERS = ("<tool_call>",)
+_TOOL_CLOSERS = ("</tool_call>",)
 
 
 def _find_opener(buffer: str) -> tuple[Optional[str], int]:
@@ -45,11 +44,7 @@ def _find_opener(buffer: str) -> tuple[Optional[str], int]:
 
 def _find_closer_for(buffer: str, opener: str) -> Optional[str]:
     """Dado un opener, busca su closer correspondiente."""
-    closer_map = {
-        "{{": "}}",
-        "<|tool_call>": "<tool_call|>",
-        "<tool_call>": "</tool_call>",
-    }
+    closer_map = {"<tool_call>": "</tool_call>"}
     expected = closer_map.get(opener)
     if expected and expected in buffer:
         return expected
@@ -88,6 +83,11 @@ class StreamPostProcessor:
         self._mode = "content"  # "content" | "tool"
         self._buffer = ""
         self._current_opener: Optional[str] = None
+        self._pending_tool_patterns: list[str] = []
+
+    @property
+    def pending_tool_patterns(self) -> list[str]:
+        return list(self._pending_tool_patterns)
 
     # ----------------------------------------------------------
     # API pública
@@ -115,6 +115,8 @@ class StreamPostProcessor:
             if self._mode == "content":
                 result = self._process_content_mode()
                 if result is None:
+                    if self._mode == "tool":
+                        continue
                     break
                 yield result
 
@@ -187,8 +189,7 @@ class StreamPostProcessor:
         self._buffer = self._buffer[closer_idx + len(closer):]
         self._mode = "content"
 
-        # Ejecutar la tool detectada
-        self._execute_tool(tool_text)
+        self._handle_tool(tool_text)
 
         return {"type": "tool_executed", "content": ""}
 
@@ -223,19 +224,12 @@ class StreamPostProcessor:
         # Sin opener parcial — todo es seguro
         return self._buffer
 
-    def _execute_tool(self, tool_text: str) -> None:
+    def _handle_tool(self, tool_text: str) -> None:
         """
-        Ejecuta una tool call detectada en el stream.
+        Guarda una tool call detectada y la ejecuta si hay callback.
         """
-        # Reconstruir el patron completo para el parser
-        opener = self._current_opener or ""
-        closer = ""
-        for o, c in zip(_TOOL_OPENERS, _TOOL_CLOSERS):
-            if o == opener:
-                closer = c
-                break
-
-        full_pattern = opener + tool_text + closer
+        full_pattern = "<tool_call>" + tool_text + "</tool_call>"
+        self._pending_tool_patterns.append(full_pattern)
 
         # Parsear y ejecutar
         calls = parse_text_tool_calls(full_pattern)

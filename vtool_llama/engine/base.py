@@ -343,15 +343,20 @@ class VToolLlama:
             dict con:
               - system_tokens: tokens del system prompt
               - history_tokens: tokens del historial (sin system)
-              - total_tokens: system + history
+              - total_tokens: tokens del prompt actual
               - max_tokens: n_ctx configurado
               - reserved: context_reserve_tokens
-              - budget_available: tokens disponibles para la respuesta
+              - effective_context_limit: max_tokens - reserved
+              - prompt_budget_available: tokens disponibles para mas prompt/contexto manteniendo la reserva
+              - response_capacity: tokens maximos que aun caben para la respuesta antes de n_ctx
+              - safe_max_response_tokens: min(config.max_tokens, response_capacity)
+              - budget_available: alias legacy de prompt_budget_available
               - usage_pct: porcentaje usado (0-100)
               - messages: cantidad de mensajes en RAM
         """
         max_tokens = self._config.n_ctx
         reserved = self._config.context_reserve_tokens
+        configured_max_response = max(0, int(getattr(self._config, "max_tokens", 0) or 0))
 
         def _count(text: str) -> int:
             if not text:
@@ -360,30 +365,102 @@ class VToolLlama:
                 return self._model_manager.count_tokens(text)
             return max(1, round(len(text) / 4))
 
+        def _count_messages(messages: list[dict]) -> int:
+            if not messages:
+                return 0
+            if self._model_manager.is_loaded and hasattr(self._model_manager, "count_messages_tokens"):
+                return self._model_manager.count_messages_tokens(messages)
+            text = " ".join(m.get("content", "") for m in messages if m.get("content"))
+            return _count(text)
+
         system_text = ""
         history_text = ""
+        system_messages = []
+        history_messages = []
         for m in self._memory.messages:
             if m.role == "system" and m.content:
                 system_text += " " + m.content
+                system_messages.append({"role": m.role, "content": m.content})
             elif m.content:
                 history_text += " " + m.content
+                history_messages.append({"role": m.role, "content": m.content})
 
-        system_tokens = _count(system_text)
-        history_tokens = _count(history_text)
-        total_tokens = system_tokens + history_tokens
-        budget_available = max(0, max_tokens - reserved - total_tokens)
+        all_messages = system_messages + history_messages
+        system_tokens = _count_messages(system_messages) if system_messages else _count(system_text)
+        history_tokens = _count_messages(history_messages) if history_messages else _count(history_text)
+        total_tokens = _count_messages(all_messages) if all_messages else 0
+        effective_context_limit = max(0, max_tokens - reserved)
+        prompt_budget_available = max(0, effective_context_limit - total_tokens)
+        response_capacity = max(0, max_tokens - total_tokens)
+        safe_max_response_tokens = min(configured_max_response, response_capacity) if configured_max_response else response_capacity
         usage_pct = round((total_tokens / max_tokens) * 100, 1) if max_tokens > 0 else 0
+        effective_usage_pct = round((total_tokens / effective_context_limit) * 100, 1) if effective_context_limit > 0 else 100.0
+        system_full_tokens = system_tokens
+        system_compact_tokens = system_tokens
+        if self._character_manager.is_loaded:
+            try:
+                count_fn = self._model_manager.count_tokens if self._model_manager.is_loaded else None
+                full_prompt = self._character_manager.build_full_system_prompt(self._config.system_prompt, self._config)
+                compact_prompt = self._character_manager.build_compact_system_prompt(self._config.system_prompt, self._config)
+                system_full_tokens = _count_messages([{"role": "system", "content": full_prompt}]) if count_fn else _count(full_prompt)
+                system_compact_tokens = _count_messages([{"role": "system", "content": compact_prompt}]) if count_fn else _count(compact_prompt)
+            except Exception:
+                system_full_tokens = system_tokens
+                system_compact_tokens = system_tokens
 
         return {
             "system_tokens": system_tokens,
+            "system_full_tokens": system_full_tokens,
+            "system_compact_tokens": system_compact_tokens,
+            "system_saved_tokens": max(0, system_full_tokens - system_compact_tokens),
             "history_tokens": history_tokens,
+            "prompt_tokens": total_tokens,
             "total_tokens": total_tokens,
             "max_tokens": max_tokens,
             "reserved": reserved,
-            "budget_available": budget_available,
+            "effective_context_limit": effective_context_limit,
+            "prompt_budget_available": prompt_budget_available,
+            "available_context_tokens": prompt_budget_available,
+            "response_capacity": response_capacity,
+            "safe_max_response_tokens": safe_max_response_tokens,
+            "budget_available": prompt_budget_available,
             "usage_pct": usage_pct,
+            "effective_usage_pct": effective_usage_pct,
+            "context_over_budget": total_tokens > effective_context_limit,
+            "can_generate_reserved": response_capacity >= reserved,
             "messages": len(self._memory.messages),
         }
+
+    def get_prompt_layer_usage(self) -> dict:
+        """Retorna tokens por capa del prompt del personaje actual."""
+        count_fn = self._model_manager.count_tokens if self._model_manager.is_loaded else None
+        breakdown = self._character_manager.get_prompt_layer_breakdown(
+            self._config.system_prompt,
+            count_fn=count_fn,
+            config=self._config,
+        )
+        max_tokens = self._config.n_ctx
+        effective_limit = max(0, max_tokens - self._config.context_reserve_tokens)
+        breakdown["max_tokens"] = max_tokens
+        breakdown["reserved"] = self._config.context_reserve_tokens
+        breakdown["effective_context_limit"] = effective_limit
+        breakdown["static_usage_pct"] = (
+            round((breakdown["static_tokens"] / max_tokens) * 100, 1)
+            if max_tokens > 0 else 0
+        )
+        breakdown["static_effective_usage_pct"] = (
+            round((breakdown["static_tokens"] / effective_limit) * 100, 1)
+            if effective_limit > 0 else 100.0
+        )
+        breakdown["conversation_budget_after_static"] = max(0, effective_limit - breakdown["static_tokens"])
+        if self._character_manager.is_loaded:
+            compact_prompt = self._character_manager.build_compact_system_prompt(self._config.system_prompt, self._config)
+            count_fn = self._model_manager.count_tokens if self._model_manager.is_loaded else None
+            compact_tokens = count_fn(compact_prompt) if count_fn else max(1, round(len(compact_prompt) / 4))
+            breakdown["compact_static_tokens"] = compact_tokens
+            breakdown["compact_saves_tokens"] = max(0, breakdown["static_tokens"] - compact_tokens)
+            breakdown["conversation_budget_after_compact"] = max(0, effective_limit - compact_tokens)
+        return breakdown
 
     def mark_semantic_dirty(self) -> None:
         """Marca la conversación actual para rebuild semántico.

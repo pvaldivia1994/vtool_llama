@@ -35,6 +35,13 @@
 
   "context_reserve_tokens": 800,
 
+  "compact_system_prompt": false,
+  "system_prompt_target_tokens": 800,
+  "system_prompt_max_tokens": 1200,
+  "always_enable_internal_tools": false,
+  "enable_text_tool_fallback": true,
+  "enable_stream_tool_execution": false,
+
   "model_idle_timeout": 600,
 
   "auto_unload_model": false,

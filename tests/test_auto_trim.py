@@ -59,6 +59,33 @@ def _make_llm(tmp, n_ctx=512, reserve=50, history_limit=50):
 
 
 class TestAutoTrimSmallContext:
+    def test_token_usage_separates_prompt_budget_from_response_capacity(self):
+        """Available budget mide espacio de prompt, no tokens libres de respuesta."""
+        from unittest.mock import MagicMock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            llm, store = _make_llm(tmp, n_ctx=1000, reserve=100)
+            llm._config.max_tokens = 256
+            llm._memory.system_prompt = "s" * 100
+            llm._memory.clear()
+            llm._memory.add_user_message("u" * 50)
+            llm._model_manager.count_messages_tokens = MagicMock(
+                side_effect=lambda messages: sum(len(m["content"]) for m in messages)
+            )
+
+            usage = llm.get_token_usage()
+
+            assert usage["prompt_tokens"] == 150
+            assert usage["total_tokens"] == 150
+            assert usage["effective_context_limit"] == 900
+            assert usage["prompt_budget_available"] == 750
+            assert usage["budget_available"] == 750
+            assert usage["response_capacity"] == 850
+            assert usage["safe_max_response_tokens"] == 256
+            assert usage["can_generate_reserved"] is True
+
+            store.close()
+
     def test_system_prompt_preserved_after_trim(self):
         """Configura n_ctx muy pequeño para forzar trim y verificar que system prompt sobrevive."""
         with tempfile.TemporaryDirectory() as tmp:

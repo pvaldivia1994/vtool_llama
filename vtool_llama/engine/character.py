@@ -8,7 +8,7 @@ from typing import Callable, Optional
 
 from .base import VToolLlama
 from ..db import ChatStore
-from ..tools import TOOL_USAGE_POLICY
+from ..tools import TOOL_USAGE_POLICY, get_active_internal_tools
 from ..utils import TokenCounter
 from ..orquestador import ContextInjectionStrategy, SceneContextStrategy
 from .context_builder import ContextBuilder
@@ -375,21 +375,30 @@ def _warmup_character_cache(self: VToolLlama, prompt: Optional[str] = None) -> N
     base_kv_path = char_dir / "_memory" / "base.state"
     meta_path = char_dir / "_memory" / "base.state.meta.json"
 
-    # 1. Compilar prompt completo
+    # 1. Compilar prompt runtime y mantener prompt full para auditoria
+    full_prompt = self._character_manager.build_full_system_prompt(self._config.system_prompt, self._config)
+    compact_prompt = self._character_manager.build_compact_system_prompt(self._config.system_prompt, self._config)
     if prompt is None:
         prompt = self._character_manager.build_system_prompt(self._config.system_prompt, self._config)
 
-    # 2. Guardar prompt como YAML (debug)
+    # 2. Guardar prompts como YAML (debug/auditoria)
     if char_dir:
-        yaml_path = char_dir / "_memory" / "base_prompt.yaml"
-        lines = prompt.split('\n')
-        yaml_lines = ["prompt: |"]
-        for line in lines:
-            yaml_lines.append(f"  {line}")
-        yaml_path.write_text('\n'.join(yaml_lines) + '\n', encoding='utf-8')
+        def _write_prompt_yaml(path: Path, text: str) -> None:
+            lines = text.split('\n')
+            yaml_lines = ["prompt: |"]
+            for line in lines:
+                yaml_lines.append(f"  {line}")
+            path.write_text('\n'.join(yaml_lines) + '\n', encoding='utf-8')
+
+        memory_dir = char_dir / "_memory"
+        _write_prompt_yaml(memory_dir / "base_prompt.yaml", prompt)
+        _write_prompt_yaml(memory_dir / "base_prompt_full.yaml", full_prompt)
+        _write_prompt_yaml(memory_dir / "base_prompt_compact.yaml", compact_prompt)
 
     import hashlib
     prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    full_prompt_hash = hashlib.sha256(full_prompt.encode("utf-8")).hexdigest()
+    compact_prompt_hash = hashlib.sha256(compact_prompt.encode("utf-8")).hexdigest()
     model_path = self._model_manager.model_info.model_path
     template_file = self._config.chat_template_file or ""
     template_hash = ""
@@ -402,6 +411,9 @@ def _warmup_character_cache(self: VToolLlama, prompt: Optional[str] = None) -> N
 
     expected_meta = {
         "prompt_hash": prompt_hash,
+        "full_prompt_hash": full_prompt_hash,
+        "compact_prompt_hash": compact_prompt_hash,
+        "compact_system_prompt": bool(getattr(self._config, "compact_system_prompt", False)),
         "model_path": model_path,
         "chat_template_file": template_file,
         "chat_template_hash": template_hash,
@@ -505,7 +517,16 @@ def _inject_personality_into_system_prompt(self: VToolLlama) -> None:
         self._config.system_prompt, self._config
     )
 
-    if self._character_manager.is_loaded:
+    last_user = ""
+    for msg in reversed(self._memory.messages):
+        if msg.role == "user" and msg.content:
+            last_user = msg.content
+            break
+
+    if (
+        self._character_manager.is_loaded
+        and get_active_internal_tools(last_user, self._config)
+    ):
         enriched_prompt += "\n\n" + TOOL_USAGE_POLICY
 
     if self._memory.system_prompt != enriched_prompt:

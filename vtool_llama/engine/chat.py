@@ -7,9 +7,9 @@ from typing import Any, Generator, Optional
 from .base import VToolLlama
 from ..exceptions import InferenceError, ModelNotLoadedError
 from ..tools import (
-    INTERNAL_TOOLS,
     StreamPostProcessor,
     execute_text_tool,
+    get_active_internal_tools,
 )
 
 
@@ -267,7 +267,7 @@ def chat(
 ) -> Any:
     self._validate_prompt(prompt)
 
-    internal_tools = list(INTERNAL_TOOLS)
+    internal_tools = get_active_internal_tools(prompt, self._config)
     active_tools = (tools or []) + internal_tools
 
     # Extraer context inline [context tipo texto]
@@ -329,7 +329,7 @@ def chat(
                         top_p=top_p,
                         top_k=top_k,
                         repeat_penalty=repeat_penalty,
-                        tools=active_tools,
+                        tools=active_tools or None,
                         tool_choice=tool_choice,
                     )
 
@@ -349,7 +349,7 @@ def chat(
                 if handled["internal_found"]:
                     for tc in (tool_calls or []):
                         fn_name = tc.get("function", {}).get("name", "")
-                        if fn_name in ("store_long_term_memory", "remember_memory"):
+                        if fn_name == "store_long_term_memory":
                             self._memory.add_assistant_message(content=None, tool_calls=[tc])
                             self._memory.add_tool_message(
                                 content="Memoria guardada. Ahora respondele al usuario.",
@@ -364,7 +364,7 @@ def chat(
                     self._short_memory.append({"role": "assistant", "content": "(Llama a herramienta externa)"})
                     return msg_choice
 
-                if not tool_calls and not memory_saved:
+                if not tool_calls and not memory_saved and self._config.enable_text_tool_fallback:
                     text_handled = self._tool_manager.handle_text_calls(
                         response_text,
                         scene_prompt,
@@ -390,7 +390,7 @@ def chat(
                             max_tokens=100,
                             temperature=0.2,
                             top_p=0.9,
-                            tools=active_tools,
+                            tools=active_tools or None,
                             tool_choice="auto",
                         )
                         coerce_choice = coerce_result["choices"][0]["message"]
@@ -471,7 +471,7 @@ def stream_chat(
             self._log_info(f"🧠 [#mem] Memoria guardada: {mem_content}")
             system_injection = f"\n\n[SYSTEM: El usuario acaba de guardar un recuerdo: '{mem_content}'. Confirma brevemente en character que lo has recordado, sin mencionar herramientas ni sistemas.]"
 
-    internal_tools = list(INTERNAL_TOOLS)
+    internal_tools = get_active_internal_tools(prompt, self._config)
     active_tools = (tools or []) + internal_tools
 
     self._check_and_rebuild_if_needed()
@@ -510,7 +510,7 @@ def stream_chat(
                     top_p=top_p,
                     top_k=top_k,
                     repeat_penalty=repeat_penalty,
-                    tools=active_tools,
+                    tools=active_tools or None,
                     tool_choice=tool_choice,
                 )
 
@@ -518,7 +518,11 @@ def stream_chat(
                 tool_calls_chunks = []
 
                 stream_pp = StreamPostProcessor(
-                    on_tool_executed=self._on_stream_tool_detected,
+                    on_tool_executed=(
+                        self._on_stream_tool_detected
+                        if self._config.enable_stream_tool_execution
+                        else None
+                    ),
                     log_fn=self._log_info,
                 )
 
@@ -557,7 +561,7 @@ def stream_chat(
                 if handled["internal_found"]:
                     for tc in (final_tool_calls or []):
                         fn_name = tc.get("function", {}).get("name", "")
-                        if fn_name in ("store_long_term_memory", "remember_memory"):
+                        if fn_name == "store_long_term_memory":
                             char_name = self._character_manager.character_name.capitalize() if self._character_manager.character_name else "El personaje"
                             yield f"\n** {char_name} recordará esto **\n\n"
                             self._memory.add_assistant_message(content=None, tool_calls=[tc])
@@ -569,16 +573,20 @@ def stream_chat(
                     yield {"choices": [{"message": {"tool_calls": handled["external_calls"]}}]}
                     return
 
-                if not final_tool_calls:
+                if (
+                    not final_tool_calls
+                    and self._config.enable_text_tool_fallback
+                    and not self._config.enable_stream_tool_execution
+                ):
+                    text_tool_source = "\n".join(stream_pp.pending_tool_patterns) or full_response
                     text_handled = self._tool_manager.handle_text_calls(
-                        full_response,
+                        text_tool_source,
                         scene_prompt,
                         tools,
                     )
                     if text_handled["memory_saved"]:
                         char_name = self._character_manager.character_name.capitalize() if self._character_manager.character_name else "El personaje"
                         yield f"\n** {char_name} recordará esto **\n\n"
-                    full_response = text_handled["cleaned_text"]
 
                     if text_handled["external_calls"]:
                         self._memory.add_assistant_message(content=None, tool_calls=text_handled["external_calls"])

@@ -55,23 +55,13 @@ INTERNAL_TOOLS = [
 
 TOOL_USAGE_POLICY = (
     "[TOOL USAGE POLICY]\n\n"
-    "You may call tools when appropriate.\n\n"
-    "---\n"
-    "TOOL: store_long_term_memory\n"
-    "---\n"
-    "PURPOSE: Store important long-term information that persists across conversations.\n\n"
-    "USE WHEN:\n"
-    "- User says: 'remember this', 'save this', 'don't forget', 'keep in mind', "
-    "'memorize', '#mem'\n"
-    "- User reveals stable info: name, age, occupation, goals, "
-    "preferences, dislikes, projects\n"
-    "- A major long-term event happens\n\n"
-    "DO NOT USE FOR: temporary emotions, casual chat, trivial facts\n\n"
-    "RULES:\n"
-    "- Never copy verbatim. Reformulate in third person.\n"
-    "- Keep concise. Store only useful information.\n\n"
-    "GOOD: 'The user is named John.' (identity)\n"
-    "BAD:  'User said he's tired' (temporary)"
+    "Call tools only when the current user message clearly requires it.\n"
+    "Use `store_long_term_memory` only for stable, useful long-term facts "
+    "or explicit requests to remember/save something.\n"
+    "Do not store temporary emotions, casual chat, or trivial details.\n"
+    "Never copy the user verbatim; rewrite memories in concise third person.\n"
+    "If native tool calling is unavailable, use exactly: "
+    '<tool_call>{"name":"store_long_term_memory","arguments":{"content":"...","category":"..."}}</tool_call>'
 )
 
 SCENE_SYSTEM_COMMAND = (

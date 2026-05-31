@@ -258,12 +258,29 @@ class CharacterManager:
         if not self._prompt_dirty and self._compiled_prompt_cache:
             return self._compiled_prompt_cache
 
-        self._compiled_prompt_cache = self._compiler.compile_static_prompt(base_system_prompt, config)
+        if config and getattr(config, "compact_system_prompt", False):
+            self._compiled_prompt_cache = self._compiler.compile_compact_prompt(base_system_prompt, config)
+        else:
+            self._compiled_prompt_cache = self._compiler.compile_static_prompt(base_system_prompt, config)
         self._prompt_dirty = False
         return self._compiled_prompt_cache
 
+    def build_full_system_prompt(self, base_system_prompt: str, config: Optional[ConfigSchema] = None) -> str:
+        return self._compiler.compile_full_prompt(base_system_prompt, config)
+
+    def build_compact_system_prompt(self, base_system_prompt: str, config: Optional[ConfigSchema] = None) -> str:
+        return self._compiler.compile_compact_prompt(base_system_prompt, config)
+
     def build_dynamic_prompt(self) -> str:
         return self._compiler.compile_dynamic_prompt()
+
+    def get_prompt_layer_breakdown(
+        self,
+        base_system_prompt: str,
+        count_fn: Optional[Callable[[str], int]] = None,
+        config: Optional[ConfigSchema] = None,
+    ) -> dict:
+        return self._compiler.get_layer_token_breakdown(base_system_prompt, count_fn, config)
 
     def mark_prompt_dirty(self) -> None:
         self._prompt_dirty = True

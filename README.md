@@ -166,6 +166,35 @@ Los prompts tecnicos del digest viven en:
 
 Estos helpers estan escritos en ingles para mejorar obediencia tecnica, pero ordenan que el digest final salga en espanol para mantener continuidad con conversaciones en espanol.
 
+`get_token_usage()` distingue entre presupuesto de prompt y capacidad de respuesta:
+
+- `prompt_tokens` / `total_tokens`: tokens que ocupa el prompt actual.
+- `effective_context_limit`: `n_ctx - context_reserve_tokens`.
+- `prompt_budget_available`: espacio restante para mas contexto manteniendo la reserva.
+- `response_capacity`: tokens que aun caben para responder antes de llegar a `n_ctx`.
+- `safe_max_response_tokens`: `response_capacity` limitado por `max_tokens`.
+- `budget_available`: alias legacy de `prompt_budget_available`.
+
+Para diagnosticar por que el system prompt pesa demasiado, `get_prompt_layer_usage()` devuelve tokens por capa compilada del personaje. Cada entrada indica fase (`static` o `dynamic`), tokens, caracteres, si la capa es obligatoria y si es candidata a moverse a retrieval.
+
+Para reducir el peso fijo del system prompt puede activarse `compact_system_prompt`. En ese modo el runtime usa una `[CHARACTER CAPSULE]` compacta generada desde el DNA del personaje y deja fuera del system inicial capas pesadas como soul completo, few-shot examples, memoria larga y detalles psicologicos secundarios.
+
+El warmup guarda tres archivos de auditoria en `_memory/`:
+
+- `base_prompt.yaml`: prompt runtime usado para `base.state`.
+- `base_prompt_full.yaml`: prompt completo para debug/rebuild.
+- `base_prompt_compact.yaml`: prompt compacto usado cuando `compact_system_prompt=true`.
+
+Las tools internas se activan por trigger en vez de estar siempre visibles. El fallback textual oficial para modelos sin tool calling nativo es:
+
+```text
+<tool_call>
+{"name":"store_long_term_memory","arguments":{"content":"...","category":"..."}}
+</tool_call>
+```
+
+No hay formatos legacy textuales habilitados.
+
 ### Modelo
 
 | Método | Descripción |
@@ -231,6 +260,12 @@ Estos helpers estan escritos en ingles para mejorar obediencia tecnica, pero ord
   "history_limit": 40,
   "auto_trim_context": true,
   "context_reserve_tokens": 800,
+  "compact_system_prompt": false,
+  "system_prompt_target_tokens": 800,
+  "system_prompt_max_tokens": 1200,
+  "always_enable_internal_tools": false,
+  "enable_text_tool_fallback": true,
+  "enable_stream_tool_execution": false,
   "enable_logging": true,
   "enable_console_debug": false,
   "auto_unload_model": false,

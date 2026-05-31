@@ -78,6 +78,10 @@ Define `VToolLlama`, la clase principal. Constructor inicializa todos los gestor
  4. coercion retry si aplica
  5. drift detection → add_assistant_message → auto-indexado semántico → return
  ```
+
+Las tools internas se activan de forma condicional con `get_active_internal_tools(prompt, config)`. Por defecto `store_long_term_memory` solo se expone si el turno contiene un trigger de memoria; `always_enable_internal_tools=true` restaura el comportamiento anterior.
+
+El fallback textual se controla con `enable_text_tool_fallback`. La ejecucion inmediata durante streaming esta desactivada por defecto con `enable_stream_tool_execution=false`.
  
  ### `character.py` — Operaciones de Personaje
  
@@ -115,7 +119,8 @@ Define `VToolLlama`, la clase principal. Constructor inicializa todos los gestor
  | `trim_memory()` | Recorte manual de contexto |
  | `_auto_trim_if_needed()` | Trunca el contexto por lotes hasta ~60% del `effective_limit` usando conteo preciso de tokens de plantilla. Genera un resumen previo inyectado como mensaje de sistema en posición 1, previniendo acumulación repetitiva y protegiendo el KV Cache de inferencia mediante save/restore state. |
  | `save_episode()` / `list_episodes()` / `load_episode()` / `delete_episode()` | Gestión de episodios |
- | `get_token_usage()` | Retorna `system_tokens`, `history_tokens`, `total_tokens`, `max_tokens`, `budget_available`, `usage_pct` |
+ | `get_token_usage()` | Retorna desglose de tokens del prompt: `prompt_tokens`/`total_tokens`, `system_tokens`, `history_tokens`, `effective_context_limit`, `prompt_budget_available`, `response_capacity`, `safe_max_response_tokens`, `usage_pct` |
+ | `get_prompt_layer_usage()` | Retorna diagnostico de tokens por capa del prompt del personaje y presupuesto restante tras el bloque estatico |
  | `_extract_inline_context()` | Parsea `[context tipo texto]` del prompt del usuario |
  
  ### `slash_commands.py` — Handlers de Slash Commands
@@ -180,6 +185,23 @@ Los prompts tecnicos del digest se cargan desde `config/prompts/helpers/`:
 | `context_digest_user.md` | Template del mensaje user con placeholder `#SOURCE` |
 
 La salida del digest debe permanecer en espanol aunque las instrucciones tecnicas internas esten en ingles.
+
+`get_token_usage()` separa dos presupuestos que antes podian confundirse:
+
+- `prompt_budget_available`: espacio restante para mas prompt/contexto manteniendo `context_reserve_tokens` libres.
+- `response_capacity`: tokens que aun caben para una respuesta antes de tocar `n_ctx`.
+- `safe_max_response_tokens`: capacidad de respuesta limitada por `config.max_tokens`.
+- `budget_available`: alias legacy de `prompt_budget_available`.
+
+Si `compact_system_prompt=true`, `CharacterManager.build_system_prompt()` retorna una `[CHARACTER CAPSULE]` compacta para runtime. El prompt completo sigue disponible mediante `build_full_system_prompt()` para auditoria y rebuild.
+
+Durante `_warmup_character_cache()` se escriben:
+
+- `_memory/base_prompt.yaml`: prompt runtime usado para el KV cache.
+- `_memory/base_prompt_full.yaml`: prompt completo.
+- `_memory/base_prompt_compact.yaml`: prompt compacto.
+
+La metadata de `base.state` incluye `full_prompt_hash`, `compact_prompt_hash` y el flag `compact_system_prompt`.
  
 ### `config_manager.py` — ConfigManager
  
@@ -289,9 +311,9 @@ VToolLlama.load_character(name)
 ├── ChatMemory.bind_store()        → vincula al store
 ├── Config merge
 ├── _warmup_character_cache():
-│   ├── build_system_prompt()      → prompt completo (DNA + templates + todo)
-│   ├── guarda base_prompt.yaml    → debug
-│   └── warmup + save base.state   → KV Cache inicial completo
+│   ├── build_system_prompt()      → prompt runtime (full o compact segun config)
+│   ├── guarda base_prompt*.yaml   → runtime/full/compact para debug
+│   └── warmup + save base.state   → KV Cache inicial del prompt runtime
 ├── ChatMemory.load_context()      → reconstruye desde SQLite vía ContextBuilder
 └── Personality injection
 

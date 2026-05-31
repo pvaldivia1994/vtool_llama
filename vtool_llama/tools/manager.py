@@ -3,7 +3,7 @@ Tool Execution Manager para vtool_llama.
 
 Centraliza toda la logica de ejecucion de herramientas:
   - Manejo de tool_calls estructurados (OpenAI format)
-  - Fallback de tool_calls en texto plano ({{...}}, <|tool_call|>)
+  - Fallback de tool_calls en texto plano (<tool_call>{json}</tool_call>)
   - Reasoning loop (continue/break logic)
   - Coercion retry (re-prompt si el modelo ignora la tool)
 """
@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from typing import Any, Callable, Optional
 
+from .definitions import INTERNAL_TOOLS
 from .parser import (
     parse_text_tool_calls,
     strip_text_tool_calls,
@@ -37,6 +38,22 @@ def has_memory_trigger(text: str) -> bool:
     """Detecta si el texto del usuario pide guardar un recuerdo."""
     lower = text.lower()
     return any(t in lower for t in _MEMORY_TRIGGERS)
+
+
+def get_active_internal_tools(user_prompt: str, config: Any = None) -> list[dict]:
+    """Retorna las tools internas que deben exponerse en este turno."""
+    always = bool(getattr(config, "always_enable_internal_tools", False))
+    if always:
+        return list(INTERNAL_TOOLS)
+
+    active_names = set()
+    if has_memory_trigger(user_prompt):
+        active_names.add("store_long_term_memory")
+
+    return [
+        tool for tool in INTERNAL_TOOLS
+        if tool.get("function", {}).get("name") in active_names
+    ]
 
 
 # ============================================================
@@ -93,18 +110,13 @@ class ToolExecutionManager:
             fn_args_raw = tc.get("function", {}).get("arguments", "{}")
             fn_args = self._safe_json_parse(fn_args_raw)
 
-            if fn_name in ("store_long_term_memory", "remember_memory"):
+            if fn_name == "store_long_term_memory":
                 execute_text_tool(
                     fn_name, fn_args,
                     add_memory_fn=self._add_memory,
                     log_fn=self._log_info,
                 )
                 result["memory_saved"] = True
-                result["internal_found"] = True
-
-            elif fn_name in ("get_scene_state", "describe_scene"):
-                self._log_info("[ToolManager] Escena solicitada via tool_call")
-                result["scene_prompt"] = scene_prompt
                 result["internal_found"] = True
 
             elif user_tools:
@@ -116,7 +128,7 @@ class ToolExecutionManager:
         return result
 
     # ----------------------------------------------------------
-    # Text-based tool_calls (fallback {{...}})
+    # Text-based tool_calls (fallback <tool_call>{json}</tool_call>)
     # ----------------------------------------------------------
 
     def handle_text_calls(
@@ -126,7 +138,7 @@ class ToolExecutionManager:
         user_tools: Optional[list[dict]] = None,
     ) -> dict:
         """
-        Procesa tool_calls escritas como texto {{...}} o <|tool_call|>.
+        Procesa tool_calls escritas como texto <tool_call>{json}</tool_call>.
 
         Returns:
             dict con:
@@ -147,18 +159,13 @@ class ToolExecutionManager:
             return result
 
         for fn_name, fn_args in text_tools:
-            if fn_name in ("store_long_term_memory", "remember_memory"):
+            if fn_name == "store_long_term_memory":
                 execute_text_tool(
                     fn_name, fn_args,
                     add_memory_fn=self._add_memory,
                     log_fn=self._log_info,
                 )
                 result["memory_saved"] = True
-                result["internal_found"] = True
-
-            elif fn_name in ("get_scene_state", "describe_scene"):
-                self._log_info("[ToolManager] Escena solicitada via texto")
-                result["scene_prompt"] = scene_prompt
                 result["internal_found"] = True
 
             elif user_tools:

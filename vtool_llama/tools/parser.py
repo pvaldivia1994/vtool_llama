@@ -1,11 +1,10 @@
 """
-Parser robusto de tool calls en texto plano para modelos GGUF.
+Parser de tool calls en texto plano para modelos GGUF.
 
-Formatos soportados:
-  {{store_long_term_memory{content:"...", category:"..."}}}
-  <|tool_call>call:get_scene_state{focus:"complete"}<tool_call|>
-  call:store_long_term_memory{content:"..."}
-  <tool_call>store_long_term_memory(content="...")</tool_call>
+Formato soportado:
+  <tool_call>
+  {"name":"store_long_term_memory","arguments":{"content":"...","category":"..."}}
+  </tool_call>
 """
 
 from __future__ import annotations
@@ -21,22 +20,9 @@ from .definitions import INTERNAL_TOOLS
 # REGEX
 # ============================================================
 
-TEXT_TOOL_RE = re.compile(
-    r"""
-    \{\{tool_code:(\w+)\{(.*?)\}\}                         # {{tool_code:name{args}}}
-    |
-    \{\{(\w+)\{(.*?)\}\}                                   # {{name{args}}}
-    |
-    <\|tool_call\>call:(\w+)\{(.*?)\}<tool_call\|>         # ChatML
-    |
-    (?:^|\s)call:(\w+)\{(.*?)\}                            # raw call:name{}
-    |
-    <tool_call>\s*(\w+)\((.*?)\)\s*</tool_call>            # XML-ish
-    """,
-    re.DOTALL | re.VERBOSE,
-)
+TEXT_TOOL_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL)
 
-_TOOL_PATTERN_STARTS = ("{{", "<|tool_call>", "call:", "<tool_call>")
+_TOOL_PATTERN_STARTS = ("<tool_call>",)
 
 
 # ============================================================
@@ -53,11 +39,9 @@ def find_tool_pattern_start(text: str) -> Optional[str]:
 def parse_text_tool_calls(text: str) -> list[tuple[str, dict]]:
     results: list[tuple[str, dict]] = []
     for match in TEXT_TOOL_RE.finditer(text):
-        fn_name = match.group(1) or match.group(3) or match.group(5) or match.group(7) or match.group(9)
-        raw_args = match.group(2) or match.group(4) or match.group(6) or match.group(8) or match.group(10) or ""
-        parsed = _safe_parse_args(raw_args)
-        if fn_name:
-            results.append((fn_name, parsed))
+        parsed = _safe_parse_tool_object(match.group(1) or "")
+        if parsed:
+            results.append(parsed)
     return results
 
 
@@ -80,13 +64,12 @@ def execute_text_tool(
     fn_args: dict,
     *,
     add_memory_fn: Callable[..., Any],
-    get_scene_state_fn: Optional[Callable[..., dict]] = None,
     log_fn: Optional[Callable[[str], None]] = None,
 ) -> Any:
     log = log_fn or (lambda *_: None)
 
     try:
-        if fn_name in ("store_long_term_memory", "remember_memory"):
+        if fn_name == "store_long_term_memory":
             content = fn_args.get("content", "").strip()
             category = fn_args.get("category", "important_event").strip()
             priority = _safe_float(fn_args.get("priority", 0.7), 0.7)
@@ -104,15 +87,6 @@ def execute_text_tool(
             )
             log(f"[AutoTool] Memoria guardada ({category}, p={priority:.2f}) - {content[:60]}")
             return result
-
-        elif fn_name in ("get_scene_state", "describe_scene"):
-            focus = fn_args.get("focus", "complete").strip().lower()
-            if get_scene_state_fn:
-                scene = get_scene_state_fn(focus=focus)
-                log(f"[AutoTool] Scene requested (focus={focus})")
-                return scene
-            log("[ToolParser] No existe get_scene_state_fn")
-            return None
 
         else:
             log(f"[ToolParser] Tool ignorada: {fn_name}")
@@ -149,6 +123,27 @@ def _safe_parse_args(args_text: str) -> dict:
     for key, value in kv_pairs:
         parsed[key] = _clean_value(value)
     return parsed
+
+
+def _safe_parse_tool_object(tool_text: str) -> Optional[tuple[str, dict]]:
+    try:
+        payload = json.loads(tool_text.strip())
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    name = payload.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return None
+    args = payload.get("arguments", {})
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except Exception:
+            args = {}
+    if not isinstance(args, dict):
+        args = {}
+    return name.strip(), args
 
 
 def _clean_value(value: str) -> Any:
