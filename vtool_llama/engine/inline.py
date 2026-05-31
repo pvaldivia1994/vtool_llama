@@ -150,28 +150,22 @@ class InlineProcessor:
         return result if result else segments
 
     def _extract_char_dash(self, segments: list[str], llm: VToolLlama) -> list[str]:
-        """De cada segmento, extrae -texto multi-palabra- → [ASSISTANT=Name][THINKS] *texto*.
-        Se inyecta vía ContextInjector como contexto del personaje.
+        """De cada segmento, extrae -texto multi-palabra- → buffer _char_thought_buffer.
+        Se inyecta en el turno actual como [ASSISTANT=Name][THINKS] *texto*.
         El -texto- se elimina del mensaje del usuario."""
-        if not llm._chat_store or not llm._memory._conversation_id:
+        name = (llm._character_manager.character_name or "ASSISTANT").capitalize()
+        buffer = getattr(llm, "_char_thought_buffer", None)
+        if buffer is None:
             return segments
 
-        name = (llm._character_manager.character_name or "ASSISTANT").capitalize()
-        from ..orquestador import ContextInjector
-
-        injector = ContextInjector(
-            llm._chat_store,
-            llm._memory._conversation_id,
-            llm._memory._branch_id,
-        )
         result: list[str] = []
         for segment in segments:
             cleaned = segment
             for match in CHAR_DASH_PATTERN.finditer(segment):
                 content = match.group(1).strip()
                 if content:
-                    injector.add("character", f"[ASSISTANT={name}][THINKS] *{content}*")
-                    llm._log_debug("INLINE", f"-char- [ASSISTANT={name}][THINKS] *{content}*")
+                    buffer.append((name, content))
+                    llm._log_debug("INLINE", f"-char- buffer: [ASSISTANT={name}][THINKS] *{content}*")
                 cleaned = cleaned.replace(match.group(0), "", 1)
             cleaned = cleaned.strip()
             if cleaned:
@@ -306,16 +300,16 @@ def _cmd_hash_thought(args: str, llm: VToolLlama) -> None:
 
 
 def _cmd_hash_char(args: str, llm: VToolLlama) -> None:
-    """#char thought → ContextInjector.add('character', '[ASSISTANT=Name][THINKS] *...*')
-    Formato literal: el modelo lee "Assistant Luna thinks: ..." como pensamiento propio.
+    """#char thought → buffer temporal, se inyecta en el turno actual como system message.
+    Formato: [ASSISTANT=Name][THINKS] *...* — el modelo lo reconoce como pensamiento propio.
     """
-    if not args or not llm._chat_store or not llm._memory._conversation_id:
+    if not args:
         return
     name = (llm._character_manager.character_name or "ASSISTANT").capitalize()
-    from ..orquestador import ContextInjector
-    inj = ContextInjector(llm._chat_store, llm._memory._conversation_id, llm._memory._branch_id)
-    inj.add("character", f"[ASSISTANT={name}][THINKS] *{args}*")
-    llm._log_debug("INLINE", f"[#char] [ASSISTANT={name}][THINKS] *{args}*")
+    buffer = getattr(llm, "_char_thought_buffer", None)
+    if buffer is not None:
+        buffer.append((name, args))
+    llm._log_debug("INLINE", f"[#char] buffer: [ASSISTANT={name}][THINKS] *{args}*")
 
 
 def _cmd_hash_tag(args: str, llm: VToolLlama) -> None:

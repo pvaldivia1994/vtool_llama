@@ -418,7 +418,27 @@ def _on_stream_tool_detected(self: VToolLlama, fn_name: str, fn_args: dict) -> N
 VToolLlama._on_stream_tool_detected = _on_stream_tool_detected
 
 
-VToolLlama._inject_char_thoughts = lambda self, messages: None
+def _inject_char_thoughts(
+    self: VToolLlama, messages: list[dict]
+) -> None:
+    """Inyecta #char y -texto- thoughts como system messages.
+    Formato [ASSISTANT=Name][THINKS] *...* — el tag literal
+    elimina ambigüedad: el modelo lo reconoce como pensamiento propio."""
+    buffer = getattr(self, "_char_thought_buffer", None)
+    if not buffer:
+        return
+    for name, thought in buffer:
+        thought_msg = {
+            "role": "system",
+            "content": f"[ASSISTANT={name}][THINKS] *{thought}*",
+        }
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "user":
+                messages.insert(i + 1, thought_msg)
+                break
+    buffer.clear()
+
+VToolLlama._inject_char_thoughts = _inject_char_thoughts
 
 
 def chat(
@@ -497,6 +517,7 @@ def chat(
                 self._inject_soul_context_into_messages(messages, original_prompt)
                 self._inject_dynamic_state_into_messages(messages)
                 self._inject_tool_policy_if_needed(messages, original_prompt)
+                self._inject_char_thoughts(messages)
 
             try:
                 if not skip_generation:
@@ -685,6 +706,7 @@ def stream_chat(
                 self._inject_soul_context_into_messages(messages, original_prompt)
                 self._inject_dynamic_state_into_messages(messages)
                 self._inject_tool_policy_if_needed(messages, original_prompt)
+                self._inject_char_thoughts(messages)
 
             self._stats.begin_generation()
 

@@ -287,10 +287,23 @@ def test_chat_with_world_command(tmp_path):
 
 
 def test_chat_with_char_thought(tmp_path):
-    """#char pensamiento → debe inyectar [ASSISTANT=X][THINKS] *...*"""
+    """#char pensamiento → buffer se inyecta como [ASSISTANT=X][THINKS] system msg."""
     llm = _make_llm(tmp_path)
+    # Track buffer antes de que chat() lo inyecte y limpie
+    original_inject = llm._inject_char_thoughts
+    injected_thoughts = []
+
+    def tracking_inject(messages):
+        for name, thought in llm._char_thought_buffer:
+            injected_thoughts.append((name, thought))
+        original_inject(messages)
+
+    llm._inject_char_thoughts = tracking_inject
     llm.chat("Hola #char estoy muy triste# que hago?")
-    assert _check_context_summary(llm, "[ASSISTANT=Test][THINKS] *estoy muy triste*")
+
+    assert len(injected_thoughts) == 1
+    assert injected_thoughts[0] == ("Test", "estoy muy triste")
+    assert llm._char_thought_buffer is not None
 
 
 def test_chat_with_action_thought_speak(tmp_path):
