@@ -77,3 +77,4 @@ class ConfigSchema:
     always_enable_internal_tools: bool = False
     enable_text_tool_fallback: bool = True
     enable_stream_tool_execution: bool = False
+    expand_n_ctx_for_core: bool = False

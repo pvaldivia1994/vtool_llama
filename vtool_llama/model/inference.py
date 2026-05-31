@@ -41,9 +41,7 @@ def generate(
             kwargs["tool_choice"] = tool_choice or "auto"
 
         try:
-            reset = getattr(self._model, "reset", None)
-            if callable(reset):
-                reset()
+            self.reset_keep()
             result = self._model.create_chat_completion(**kwargs)
             return result
         except Exception as e:

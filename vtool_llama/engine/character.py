@@ -30,133 +30,147 @@ def load_character(
     semantic_memory: bool = False,
     resume_conversation: bool = True,
 ) -> object:
-    self._character_manager.cancel_load()
-    result = self._character_manager.load_character(name)
+    if self._loading:
+        raise RuntimeError(
+            f"Ya hay una carga de personaje en curso ('{self._character_manager.character_name}'). "
+            "Esperá a que termine antes de cargar otro."
+        )
 
-    char_dir = self._character_manager._char_dir
-    if char_dir:
-        merged = self._config_manager.merge_character_config(char_dir)
-        if merged.system_prompt != self._config.system_prompt:
-            self._log_debug("CONFIG", f"system_prompt overrideado por '{name}/config.json'")
-        self._config = merged
-        self._model_manager._config = merged
-        self._soul_generator._config = merged
-        self._memory._history_limit = merged.chat_memory_limit
+    self._loading = True
+    try:
+        self._character_manager.cancel_load()
+        result = self._character_manager.load_character(name)
 
-    old_store = getattr(self, "_chat_store", None)
-    if old_store:
-        try:
-            old_store.close()
-        except Exception:
-            pass
-    old_chroma = getattr(self, "_semantic_chroma", None)
-    if old_chroma:
-        try:
-            old_chroma.close()
-        except Exception:
-            pass
+        char_dir = self._character_manager._char_dir
+        if char_dir:
+            merged = self._config_manager.merge_character_config(char_dir)
+            if merged.system_prompt != self._config.system_prompt:
+                self._log_debug("CONFIG", f"system_prompt overrideado por '{name}/config.json'")
+            self._config = merged
+            self._model_manager._config = merged
+            self._soul_generator._config = merged
+            self._memory._history_limit = merged.chat_memory_limit
 
-    tpl_file = self._config.chat_template_file
-    if tpl_file and self._model_manager.is_loaded:
-        tpl_path = Path(tpl_file)
-        if not tpl_path.is_absolute():
-            tpl_path = Path(__file__).parent.parent / "config" / tpl_file
-        if tpl_path.exists():
+        old_store = getattr(self, "_chat_store", None)
+        if old_store:
             try:
-                from llama_cpp.llama_chat_format import Jinja2ChatFormatter
-                template_str = tpl_path.read_text(encoding="utf-8")
-                eos = self._model_manager._model.tokenizer.eos_token if hasattr(self._model_manager._model, 'tokenizer') else ""
-                bos = self._model_manager._model.tokenizer.bos_token if hasattr(self._model_manager._model, 'tokenizer') else ""
-                self._model_manager._model.chat_handler = Jinja2ChatFormatter(
-                    template=template_str,
-                    eos_token=eos,
-                    bos_token=bos,
-                )
-                self._log_debug("MODEL", f"Chat template aplicado: {tpl_path}")
-            except Exception as e:
-                self._log_warning(f"No se pudo aplicar chat template: {e}")
-
-    # Inicializar SQLite event store + ContextBuilder
-    if char_dir:
-        db_path = char_dir / "_memory" / "chat.db"
-        self._chat_store = ChatStore(str(db_path))
-
-        tokenize_fn = None
-        if self._model_manager.is_loaded:
-            tokenize_fn = self._model_manager.count_tokens
-        self._token_counter = TokenCounter(tokenize_fn=tokenize_fn)
-
-        # Inicializar ChromaDB semántico (opcional, por personaje)
-        enable_semantic = semantic_memory or self._config.semantic_memory_enabled
-        if enable_semantic:
-            try:
-                from ..db.chroma_store import ChromaStore, HAS_CHROMA
-                if HAS_CHROMA:
-                    self._semantic_chroma = ChromaStore(
-                        char_dir / "_memory" / "semantic",
-                        "conversation_chunks",
-                        log_fn=lambda m: self._log_debug("SEMANTIC", m),
-                    )
-                    self._semantic_chroma.initialize()
-                else:
-                    self._semantic_chroma = None
+                old_store.close()
             except Exception:
+                pass
+        old_chroma = getattr(self, "_semantic_chroma", None)
+        if old_chroma:
+            try:
+                old_chroma.close()
+            except Exception:
+                pass
+
+        tpl_file = self._config.chat_template_file
+        if tpl_file and self._model_manager.is_loaded:
+            tpl_path = Path(tpl_file)
+            if not tpl_path.is_absolute():
+                tpl_path = Path(__file__).parent.parent / "config" / tpl_file
+            if tpl_path.exists():
+                try:
+                    from llama_cpp.llama_chat_format import Jinja2ChatFormatter
+                    template_str = tpl_path.read_text(encoding="utf-8")
+                    eos = self._model_manager._model.tokenizer.eos_token if hasattr(self._model_manager._model, 'tokenizer') else ""
+                    bos = self._model_manager._model.tokenizer.bos_token if hasattr(self._model_manager._model, 'tokenizer') else ""
+                    self._model_manager._model.chat_handler = Jinja2ChatFormatter(
+                        template=template_str,
+                        eos_token=eos,
+                        bos_token=bos,
+                    )
+                    self._log_debug("MODEL", f"Chat template aplicado: {tpl_path}")
+                except Exception as e:
+                    self._log_warning(f"No se pudo aplicar chat template: {e}")
+
+        # Inicializar SQLite event store + ContextBuilder
+        if char_dir:
+            db_path = char_dir / "_memory" / "chat.db"
+            self._chat_store = ChatStore(str(db_path))
+
+            tokenize_fn = None
+            if self._model_manager.is_loaded:
+                tokenize_fn = self._model_manager.count_tokens
+            self._token_counter = TokenCounter(tokenize_fn=tokenize_fn)
+
+            # Inicializar ChromaDB semántico (opcional, por personaje)
+            enable_semantic = semantic_memory or self._config.semantic_memory_enabled
+            if enable_semantic:
+                try:
+                    from ..db.chroma_store import ChromaStore, HAS_CHROMA
+                    if HAS_CHROMA:
+                        self._semantic_chroma = ChromaStore(
+                            char_dir / "_memory" / "semantic",
+                            "conversation_chunks",
+                            log_fn=lambda m: self._log_debug("SEMANTIC", m),
+                        )
+                        self._semantic_chroma.initialize()
+                    else:
+                        self._semantic_chroma = None
+                except Exception:
+                    self._semantic_chroma = None
+            else:
                 self._semantic_chroma = None
+
+            strategies = [
+                ContextInjectionStrategy(),
+                SceneContextStrategy(),
+            ]
+            if self._semantic_chroma and self._semantic_chroma.is_available:
+                strategies.append(SemanticRetrievalStrategy(chroma_store=self._semantic_chroma))
+            strategies.append(RecentMessagesStrategy())
+
+            self._context_builder = ContextBuilder(
+                store=self._chat_store,
+                token_counter=self._token_counter,
+                strategies=strategies,
+            )
+
+            conv = (
+                self._chat_store.get_or_create_conversation(name)
+                if resume_conversation
+                else self._chat_store.create_conversation(name)
+            )
+
+            self._memory.bind_store(
+                store=self._chat_store,
+                context_builder=self._context_builder,
+                token_counter=self._token_counter,
+                conversation_id=conv.id,
+                branch_id=conv.active_branch_id,
+                leaf_message_id=conv.active_leaf_message_id,
+            )
         else:
+            self._chat_store = None
+            self._context_builder = None
+            self._token_counter = None
             self._semantic_chroma = None
 
-        strategies = [
-            ContextInjectionStrategy(),
-            SceneContextStrategy(),
-        ]
-        if self._semantic_chroma and self._semantic_chroma.is_available:
-            strategies.append(SemanticRetrievalStrategy(chroma_store=self._semantic_chroma))
-        strategies.append(RecentMessagesStrategy())
+        if char_dir and self._model_manager.is_loaded:
+            prompt = self._character_manager.build_system_prompt(self._config.system_prompt, self._config)
+            self._warmup_character_cache(prompt)
 
-        self._context_builder = ContextBuilder(
-            store=self._chat_store,
-            token_counter=self._token_counter,
-            strategies=strategies,
-        )
+        self._memory.clear()
+        self._inject_personality_into_system_prompt()
 
-        conv = (
-            self._chat_store.get_or_create_conversation(name)
-            if resume_conversation
-            else self._chat_store.create_conversation(name)
-        )
+        # Reconstruir contexto desde SQLite
+        if self._context_builder and self._chat_store:
+            token_budget = self._config.n_ctx - self._config.context_reserve_tokens
+            self._memory.load_context(token_budget)
+            self._log_debug("CHAT", f"Contexto reconstruido desde SQLite (budget={token_budget})")
 
-        self._memory.bind_store(
-            store=self._chat_store,
-            context_builder=self._context_builder,
-            token_counter=self._token_counter,
-            conversation_id=conv.id,
-            branch_id=conv.active_branch_id,
-            leaf_message_id=conv.active_leaf_message_id,
-        )
-    else:
-        self._chat_store = None
-        self._context_builder = None
-        self._token_counter = None
-        self._semantic_chroma = None
+        if self._character_manager._soul_accessor and self._character_manager._soul_accessor.is_active:
+            self._log_info(f"Soul System activo para '{name}'. Personalidad potenciada por vida simulada.")
 
-    if char_dir and self._model_manager.is_loaded:
-        prompt = self._character_manager.build_system_prompt(self._config.system_prompt, self._config)
-        self._warmup_character_cache(prompt)
+        self._log_debug("CHAR", f"Personaje '{name}' cargado. Flag _loading=False.")
+        return result
 
-    self._memory.clear()
-    self._inject_personality_into_system_prompt()
-
-    # Aplicar chat template Jinja personalizado si está configurado
-    # Reconstruir contexto desde SQLite
-    if self._context_builder and self._chat_store:
-        token_budget = self._config.n_ctx - self._config.context_reserve_tokens
-        self._memory.load_context(token_budget)
-        self._log_debug("CHAT", f"Contexto reconstruido desde SQLite (budget={token_budget})")
-
-    if self._character_manager._soul_accessor and self._character_manager._soul_accessor.is_active:
-        self._log_info(f"Soul System activo para '{name}'. Personalidad potenciada por vida simulada.")
-
-    return result
+    except Exception:
+        self._log_debug("CHAR", f"Error en load_character('{name}'), limpiando flag _loading.")
+        raise
+    finally:
+        self._loading = False
 
 VToolLlama.load_character = load_character
 
@@ -382,6 +396,9 @@ def _warmup_character_cache(self: VToolLlama, prompt: Optional[str] = None) -> N
         prompt = self._character_manager.build_system_prompt(self._config.system_prompt, self._config)
 
     # 2. Guardar prompts como YAML (debug/auditoria)
+    #    base_prompt.yaml = el que usa el modelo en runtime
+    #    base_prompt_full.yaml = solo si es distinto (evita duplicados)
+    #    base_prompt_compact.yaml = siempre (referencia)
     if char_dir:
         def _write_prompt_yaml(path: Path, text: str) -> None:
             lines = text.split('\n')
@@ -392,8 +409,10 @@ def _warmup_character_cache(self: VToolLlama, prompt: Optional[str] = None) -> N
 
         memory_dir = char_dir / "_memory"
         _write_prompt_yaml(memory_dir / "base_prompt.yaml", prompt)
-        _write_prompt_yaml(memory_dir / "base_prompt_full.yaml", full_prompt)
-        _write_prompt_yaml(memory_dir / "base_prompt_compact.yaml", compact_prompt)
+        if full_prompt != prompt:
+            _write_prompt_yaml(memory_dir / "base_prompt_full.yaml", full_prompt)
+        if compact_prompt != prompt:
+            _write_prompt_yaml(memory_dir / "base_prompt_compact.yaml", compact_prompt)
 
     import hashlib
     prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
@@ -418,6 +437,7 @@ def _warmup_character_cache(self: VToolLlama, prompt: Optional[str] = None) -> N
         "chat_template_file": template_file,
         "chat_template_hash": template_hash,
         "n_ctx": self._config.n_ctx,
+        "n_keep": 0,  # se actualiza después del warmup
     }
     current_meta = {}
     if meta_path.exists():
@@ -434,10 +454,41 @@ def _warmup_character_cache(self: VToolLlama, prompt: Optional[str] = None) -> N
     if not cache_valid:
         self._log_debug("STATE", "Generando KV Cache Base (prompt completo)...")
         self._model_manager.warmup_system_prompt(prompt)
+
+        # Medir n_keep: el warmup genera 1 token extra, lo restamos
+        raw_nt = getattr(self._model_manager._model, "n_tokens", None)
+        if isinstance(raw_nt, (int, float)):
+            n_keep = max(0, int(raw_nt) - 1)
+        else:
+            n_keep = 0
+        self._model_manager._n_keep = n_keep if n_keep > 0 else None
+        expected_meta["n_keep"] = n_keep
+
+        # ── Expansión de n_ctx (v8) ──────────────────────────────────
+        # Si expand_n_ctx_for_core está activo y el core aún no se expandió,
+        # recargamos el modelo con n_ctx = user_n_ctx + n_keep para que el
+        # core viva en posiciones [0..n_keep) y el usuario tenga user_n_ctx libres.
+        expand = bool(getattr(self._config, "expand_n_ctx_for_core", False))
+        if expand and not self._model_manager._core_expanded and n_keep > 0:
+            user_n_ctx = self._model_manager._user_n_ctx
+            if user_n_ctx == 0:
+                user_n_ctx = self._config.n_ctx
+            expanded_ctx = user_n_ctx + n_keep
+            self._log_debug("STATE", f"Expandiendo n_ctx a {expanded_ctx} "
+                            f"(core {n_keep} + user {user_n_ctx})")
+            self._config.n_ctx = expanded_ctx
+            self._model_manager.reload_model_with_expanded_ctx(expanded_ctx)
+            # Re-ejecutar warmup con el n_ctx expandido y salir
+            self._warmup_character_cache(prompt)
+            return
+
         self._model_manager.save_kv_state(str(base_kv_path))
         meta_path.write_text(json.dumps(expected_meta, ensure_ascii=False, indent=2), encoding="utf-8")
     else:
         self._model_manager.load_kv_state(str(base_kv_path))
+        # Restaurar n_keep desde meta del state guardado
+        n_keep = current_meta.get("n_keep", 0)
+        self._model_manager._n_keep = n_keep if n_keep > 0 else None
 
     self._character_manager.mark_rebuild_done(prompt)
 
@@ -513,21 +564,15 @@ VToolLlama.rebuild_personality_state = rebuild_personality_state
 
 
 def _inject_personality_into_system_prompt(self: VToolLlama) -> None:
+    """Construye y asigna el system prompt ESTABLE del personaje.
+
+    NOTA: ya NO incluye TOOL_USAGE_POLICY — esa se inyecta como mensaje
+    system dinámico antes del último user (ver _inject_tool_policy_if_needed).
+    Esto mantiene el core del KV cache estable entre turnos (v6).
+    """
     enriched_prompt = self._character_manager.build_system_prompt(
         self._config.system_prompt, self._config
     )
-
-    last_user = ""
-    for msg in reversed(self._memory.messages):
-        if msg.role == "user" and msg.content:
-            last_user = msg.content
-            break
-
-    if (
-        self._character_manager.is_loaded
-        and get_active_internal_tools(last_user, self._config)
-    ):
-        enriched_prompt += "\n\n" + TOOL_USAGE_POLICY
 
     if self._memory.system_prompt != enriched_prompt:
         self._memory.system_prompt = enriched_prompt

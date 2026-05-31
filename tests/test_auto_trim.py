@@ -253,9 +253,9 @@ class TestIsContextNearLimit:
 class TestKVCacheProtection:
     """Tests para verificar que el KV cache se protege durante el resumen pre-trim."""
 
-    def test_kv_state_saved_and_restored_during_trim(self):
-        """Verifica que save_state/load_state se llaman durante el trim."""
-        from unittest.mock import MagicMock, call, patch
+    def test_trim_works_without_save_load_state(self):
+        """El trim funciona sin save_state/load_state (reset_keep protege el core)."""
+        from unittest.mock import MagicMock
 
         with tempfile.TemporaryDirectory() as tmp:
             llm, store = _make_llm(tmp)
@@ -272,18 +272,26 @@ class TestKVCacheProtection:
 
             _fill_memory(llm, 20)
 
-            # Acceder al mock del modelo directamente
+            # Reset mocks para medir llamadas
             mock_model = llm._model_manager._model
             mock_model.save_state.reset_mock()
             mock_model.load_state.reset_mock()
 
             llm._auto_trim_if_needed()
 
-            # Verificar que se llamó save_state y load_state
-            assert mock_model.save_state.called, \
-                "save_state debería haberse llamado para proteger el KV cache"
-            assert mock_model.load_state.called, \
-                "load_state debería haberse llamado para restaurar el KV cache"
+            # Verificar que NO se llamó save_state/load_state
+            # (reset_keep los hace redundantes)
+            assert not mock_model.save_state.called, \
+                "save_state NO debe llamarse (reset_keep protege el core)"
+            assert not mock_model.load_state.called, \
+                "load_state NO debe llamarse (reset_keep protege el core)"
+
+            # Verificar que el trim igual funcionó (hay un resumen en memoria)
+            has_digest = any(
+                "RESUMEN" in (m.content or "") or "resumen" in (m.content or "").lower()
+                for m in llm._memory.messages
+            )
+            assert has_digest, "El trim debería haber insertado un resumen"
 
             store.close()
 

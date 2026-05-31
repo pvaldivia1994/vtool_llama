@@ -44,6 +44,8 @@ Define `VToolLlama`, la clase principal. Constructor inicializa todos los gestor
 | `chat_store` (property) | Acceso a `ChatStore` (SQLite event store) |
 | `token_counter` (property) | Acceso a `TokenCounter` |
 | `semantic_saving` (property) | `True` si se está indexando en ChromaDB |
+| `loading` (property) | `True` si hay una carga de personaje en curso |
+| `get_tool_stats() → dict` | Métricas de tools del `ToolExecutionManager` |
 | `checkout(branch_id, leaf_message_id)` | Rollback no destructivo a un punto del historial |
 | `delete_message(message_id)` | Soft-delete de un mensaje |
 | `regenerate_response(message_id, label="") → str` | Crea branch desde un mensaje y checkout |
@@ -105,8 +107,9 @@ El fallback textual se controla con `enable_text_tool_fallback`. La ejecucion in
  | `set_mod(id, target_layer, override_value, intensity)` | Aplica un mod temporal |
  | `remove_mod(mod_id)` | Elimina un mod |
  | `rebuild_personality_state()` | Reconstruye personalidad desde historial + guarda base_prompt.yaml |
- | `_warmup_character_cache(prompt)` | Compila prompt estático completo → guarda `base_prompt.yaml` → warmup total → guarda `base.state` |
- | `_inject_personality_into_system_prompt()` | Inyecta únicamente el prompt de sistema estático del personaje en la memoria RAM del chat |
+ | `_warmup_character_cache(prompt)` | Compila prompt estático completo → guarda `base_prompt.yaml` → warmup total → mide `n_keep` (tokens del core) → guarda `base.state` + `n_keep` en meta. Al cargar, restaura `_n_keep` desde meta para que `reset_keep()` proteja el core (v6) |
+ | `_inject_personality_into_system_prompt()` | Inyecta únicamente el prompt de sistema ESTABLE del personaje (sin TOOL_USAGE_POLICY). Se llama solo en load_character() y cuando se restaura el prompt tras trim/episode. El core del KV cache se mantiene estable entre turnos (v6+v7) |
+| `_inject_tool_policy_if_needed(messages, user_prompt)` | Inyecta `TOOL_USAGE_POLICY` como mensaje `system` dinámico antes del último `user` solo si hay tools activas. NO modifica el core del KV cache (v7) |
  | `_check_and_rebuild_if_needed()` | Rebuild automático antes del chat si hay memorias nuevas |
  
  ### `memory.py` — Memoria y Episodios
@@ -116,10 +119,10 @@ El fallback textual se controla con `enable_text_tool_fallback`. La ejecucion in
  | `clear_memory()` / `reset_chat()` | Limpia historial |
  | `get_memory()` / `export_memory_json()` / `import_memory_json()` | Acceso y serialización |
  | `set_system_prompt(prompt)` | Cambia system prompt |
- | `trim_memory()` | Recorte manual de contexto |
- | `_auto_trim_if_needed()` | Trunca el contexto por lotes hasta ~60% del `effective_limit` usando conteo preciso de tokens de plantilla. Genera un resumen previo inyectado como mensaje de sistema en posición 1, previniendo acumulación repetitiva y protegiendo el KV Cache de inferencia mediante save/restore state. |
+| `trim_memory()` | Recorte manual de contexto |
+| `_auto_trim_if_needed()` | Trunca el contexto por lotes hasta ~60% del `effective_limit` usando conteo preciso de tokens de plantilla. Genera un resumen previo inyectado como mensaje de sistema en posición 1, previniendo acumulación repetitiva. Ya no hace save/restore del KV cache (v6): `reset_keep()` mantiene el core intacto durante la generación del digest. |
  | `save_episode()` / `list_episodes()` / `load_episode()` / `delete_episode()` | Gestión de episodios |
- | `get_token_usage()` | Retorna desglose de tokens del prompt: `prompt_tokens`/`total_tokens`, `system_tokens`, `history_tokens`, `effective_context_limit`, `prompt_budget_available`, `response_capacity`, `safe_max_response_tokens`, `usage_pct` |
+ | `get_token_usage()` | Retorna desglose de tokens del prompt: `prompt_tokens`/`total_tokens`, `system_tokens`, `history_tokens`, `effective_context_limit`, `prompt_budget_available`, `response_capacity`, `safe_max_response_tokens`, `usage_pct`. Además (v6): `n_keep` (core protegido en KV cache), `kv_cache_tokens` (tokens reales en el KV cache del modelo), `kv_cache_usage_pct` (% real de uso del KV cache) |
  | `get_prompt_layer_usage()` | Retorna diagnostico de tokens por capa del prompt del personaje y presupuesto restante tras el bloque estatico |
  | `_extract_inline_context()` | Parsea `[context tipo texto]` del prompt del usuario |
  

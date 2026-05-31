@@ -24,6 +24,9 @@ class ModelManager:
         self._lock = threading.RLock()
         self._tokenize_fn: Optional[Callable] = None
         self._loading = False
+        self._n_keep: Optional[int] = None
+        self._user_n_ctx: int = 0  # n_ctx visible para el usuario (sin expandir)
+        self._core_expanded: bool = False  # True si ya se recargó con n_ctx expandido
 
     @property
     def model(self) -> Any:

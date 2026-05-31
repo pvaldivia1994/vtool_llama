@@ -61,10 +61,15 @@ Orquestador que maneja tool calls estructuradas (OpenAI format) y en texto plano
 | `handle_text_calls(text, scene_prompt, user_tools)` | Procesa tool calls en texto plano. Retorna `{"internal_found": bool, "cleaned_text": str, "external_calls": list, "memory_saved": bool}` |
 | `needs_tool_coercion(prompt, response, has_tools, is_stream)` | Determina si el modelo debió usar una tool y no lo hizo |
 | `build_coercion_prompt(prompt)` | Genera prompt de re-intento forzando el uso de la tool |
+| `stats` (property) | Retorna métricas: `structured_calls`, `text_calls`, `memory_saved`, `hallucinations`, `coercion_retries` |
+
+**Métricas (v7)**: `ToolExecutionManager` lleva contadores internos de cada tipo de tool call, memorias guardadas, alucinaciones filtradas y coercion retries. Se exponen vía `llm.get_tool_stats()`.
 
 **Resolución**: Las herramientas internas se ejecutan directamente. Las herramientas externas (del usuario) se devuelven para que el engine las maneje.
 
 Las tools internas ya no tienen que exponerse siempre al modelo. Por defecto `store_long_term_memory` se activa cuando el prompt del usuario contiene un trigger de memoria (`recuerda`, `no olvides`, `remember`, etc.). Puede forzarse con `always_enable_internal_tools=true`.
+
+**Política de uso**: `TOOL_USAGE_POLICY` ya no se inyecta en el system prompt fijo (v7). En su lugar, se agrega como mensaje `system` dinámico antes del último mensaje `user` mediante `_inject_tool_policy_if_needed()` solo cuando hay tools activas. Esto mantiene el core del KV cache estable entre turnos.
 
 Config relacionada:
 

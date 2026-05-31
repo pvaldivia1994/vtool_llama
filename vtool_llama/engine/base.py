@@ -142,6 +142,11 @@ class VToolLlama:
         self._semantic_saving = False
 
         # ------------------------------------------------------------------
+        # 6e. Flag de carga de personaje
+        # ------------------------------------------------------------------
+        self._loading: bool = False
+
+        # ------------------------------------------------------------------
         # 7. Short memory (últimos N mensajes para contexto inmediato)
         # ------------------------------------------------------------------
         self._short_memory: deque[dict] = deque(
@@ -261,6 +266,15 @@ class VToolLlama:
     def semantic_saving(self) -> bool:
         return self._semantic_saving
 
+    @property
+    def loading(self) -> bool:
+        """Indica si hay una carga de personaje en curso."""
+        return self._loading
+
+    def get_tool_stats(self) -> dict:
+        """Retorna métricas de uso de herramientas del character actual."""
+        return dict(self._tool_manager.stats)
+
     def checkout(self, branch_id: str, leaf_message_id: int) -> None:
         """Rollback no destructivo a un branch + mensaje específico."""
         if not self._chat_store or not self._memory._conversation_id:
@@ -354,7 +368,11 @@ class VToolLlama:
               - usage_pct: porcentaje usado (0-100)
               - messages: cantidad de mensajes en RAM
         """
+        # Si el core está expandido (v8), reportamos el n_ctx del usuario,
+        # no el n_ctx real del modelo (que es user_n_ctx + n_keep)
         max_tokens = self._config.n_ctx
+        if self._model_manager._core_expanded and self._model_manager._user_n_ctx:
+            max_tokens = self._model_manager._user_n_ctx
         reserved = self._config.context_reserve_tokens
         configured_max_response = max(0, int(getattr(self._config, "max_tokens", 0) or 0))
 
@@ -395,6 +413,19 @@ class VToolLlama:
         safe_max_response_tokens = min(configured_max_response, response_capacity) if configured_max_response else response_capacity
         usage_pct = round((total_tokens / max_tokens) * 100, 1) if max_tokens > 0 else 0
         effective_usage_pct = round((total_tokens / effective_context_limit) * 100, 1) if effective_context_limit > 0 else 100.0
+        # Métricas del KV cache real (plan v6)
+        n_keep = getattr(self._model_manager, "_n_keep", None) or 0
+        kv_cache_tokens = 0
+        if self._model_manager.is_loaded:
+            raw = getattr(self._model_manager._model, "n_tokens", None)
+            if isinstance(raw, (int, float)):
+                kv_cache_tokens = int(raw)
+        kv_cache_usage_pct = (
+            round((kv_cache_tokens / max_tokens) * 100, 1)
+            if max_tokens > 0 and kv_cache_tokens > 0
+            else 0.0
+        )
+
         system_full_tokens = system_tokens
         system_compact_tokens = system_tokens
         if self._character_manager.is_loaded:
@@ -408,7 +439,7 @@ class VToolLlama:
                 system_full_tokens = system_tokens
                 system_compact_tokens = system_tokens
 
-        return {
+        result = {
             "system_tokens": system_tokens,
             "system_full_tokens": system_full_tokens,
             "system_compact_tokens": system_compact_tokens,
@@ -429,7 +460,12 @@ class VToolLlama:
             "context_over_budget": total_tokens > effective_context_limit,
             "can_generate_reserved": response_capacity >= reserved,
             "messages": len(self._memory.messages),
+            "n_keep": n_keep,
+            "kv_cache_tokens": kv_cache_tokens,
+            "kv_cache_usage_pct": kv_cache_usage_pct,
         }
+
+        return result
 
     def get_prompt_layer_usage(self) -> dict:
         """Retorna tokens por capa del prompt del personaje actual."""

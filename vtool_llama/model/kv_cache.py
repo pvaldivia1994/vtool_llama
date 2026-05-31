@@ -52,3 +52,46 @@ def warmup_system_prompt(self: ModelManager, system_prompt: str) -> None:
         self._log("MODEL", "Warmup completado.")
 
 ModelManager.warmup_system_prompt = warmup_system_prompt
+
+
+def reset_keep(self: ModelManager) -> None:
+    """Borra el KV cache después de n_keep. El core del system prompt queda intacto.
+
+    - Si _n_keep es None: reset completo (legacy).
+    - Si _n_keep > 0 y n_tokens > n_keep: usa kv_cache_seq_rm para borrar solo
+      posiciones [n_keep, n_tokens). El core [0..n_keep) queda intacto.
+    - Si n_tokens <= n_keep: no hay nada que borrar.
+    - Si la API de bajo nivel no está disponible: fallback a reset() completo.
+    """
+    if self._n_keep is None or self._n_keep <= 0:
+        if hasattr(self._model, "reset") and callable(self._model.reset):
+            self._model.reset()
+        return
+
+    n_tokens = getattr(self._model, "n_tokens", 0)
+    if n_tokens <= self._n_keep:
+        return  # Todo es core, no hay nada que borrar
+
+    try:
+        ctx = getattr(self._model, "_ctx", None) or getattr(self._model, "ctx", None)
+        if ctx is not None and hasattr(ctx, "kv_cache_seq_rm"):
+            ctx.kv_cache_seq_rm(-1, self._n_keep, n_tokens)
+            self._model.n_tokens = self._n_keep
+            self._log(
+                "MODEL",
+                f"reset_keep: core intacto ({self._n_keep} tokens, "
+                f"liberados {n_tokens - self._n_keep})",
+            )
+            return
+
+        # Fallback: API no disponible
+        if hasattr(self._model, "reset") and callable(self._model.reset):
+            self._model.reset()
+            self._log("MODEL", "reset_keep: API kv_cache_seq_rm no disponible, reset completo")
+    except Exception as e:
+        self._log("MODEL", f"reset_keep: error ({e}), fallback a reset completo")
+        if hasattr(self._model, "reset") and callable(self._model.reset):
+            self._model.reset()
+
+
+ModelManager.reset_keep = reset_keep

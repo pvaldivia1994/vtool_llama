@@ -8,9 +8,49 @@ from .base import VToolLlama
 from ..exceptions import InferenceError, ModelNotLoadedError
 from ..tools import (
     StreamPostProcessor,
+    TOOL_USAGE_POLICY,
     execute_text_tool,
     get_active_internal_tools,
 )
+
+
+def _get_inference_messages(self: VToolLlama) -> list[dict]:
+    """Retorna los mensajes para inferencia, omitiendo el system prompt
+    si el core está expandido en el KV cache (v8)."""
+    messages = self._memory.get_context_messages()
+    if self._model_manager._core_expanded and self._model_manager._n_keep:
+        # El core ya está en posiciones [0..n_keep) del KV cache
+        # No necesita reenviarse en cada turno
+        messages = [m for m in messages if m.get("role") != "system"]
+    return messages
+
+VToolLlama._get_inference_messages = _get_inference_messages
+
+
+def _inject_tool_policy_if_needed(
+    self: VToolLlama,
+    messages: list[dict],
+    user_prompt: str,
+) -> None:
+    """Inyecta TOOL_USAGE_POLICY como mensaje system antes del último user.
+
+    NO modifica el system_prompt estable del core (v6).
+    Solo agrega la política si hay tools internas activas para este turno.
+    """
+    if not self._character_manager.is_loaded:
+        return
+    active = get_active_internal_tools(user_prompt, self._config)
+    if not active:
+        return
+
+    policy_msg = {"role": "system", "content": TOOL_USAGE_POLICY}
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].get("role") == "user":
+            messages.insert(i, policy_msg)
+            return
+    messages.append(policy_msg)
+
+VToolLlama._inject_tool_policy_if_needed = _inject_tool_policy_if_needed
 
 
 def _extract_inline_context(self: VToolLlama, prompt: str) -> str:
@@ -265,6 +305,10 @@ def chat(
     tools: Optional[list[dict]] = None,
     tool_choice: Optional[Any] = None,
 ) -> Any:
+    if self._loading:
+        raise RuntimeError(
+            "El personaje se está cargando. Esperá a que termine antes de chatear."
+        )
     self._validate_prompt(prompt)
 
     internal_tools = get_active_internal_tools(prompt, self._config)
@@ -296,7 +340,6 @@ def chat(
         self._memory.add_user_message(prompt)
         self._auto_trim_if_needed()
 
-        self._inject_personality_into_system_prompt()
         self._apply_emotional_trigger(prompt)
 
         loop_count = 0
@@ -306,11 +349,12 @@ def chat(
 
         while loop_count < MAX_LOOPS:
             loop_count += 1
-            messages = self._memory.get_context_messages()
+            messages = self._get_inference_messages()
 
             if loop_count == 1:
                 self._inject_soul_context_into_messages(messages, prompt)
                 self._inject_dynamic_state_into_messages(messages)
+                self._inject_tool_policy_if_needed(messages, prompt)
                 # scene context injection moved to /scene_view command
 
             if system_injection and loop_count == 1:
@@ -451,6 +495,10 @@ def stream_chat(
     tools: Optional[list[dict]] = None,
     tool_choice: Optional[Any] = None,
 ) -> Generator[Any, None, None]:
+    if self._loading:
+        raise RuntimeError(
+            "El personaje se está cargando. Esperá a que termine antes de chatear."
+        )
     self._validate_prompt(prompt)
 
     slash_result = self._handle_slash_command(prompt)
@@ -480,18 +528,18 @@ def stream_chat(
         self._short_memory.append({"role": "user", "content": prompt})
         self._memory.add_user_message(prompt)
         self._auto_trim_if_needed()
-        self._inject_personality_into_system_prompt()
 
         loop_count = 0
         MAX_LOOPS = 3
 
         while loop_count < MAX_LOOPS:
             loop_count += 1
-            messages = self._memory.get_context_messages()
+            messages = self._get_inference_messages()
 
             if loop_count == 1:
                 self._inject_soul_context_into_messages(messages, prompt)
                 self._inject_dynamic_state_into_messages(messages)
+                self._inject_tool_policy_if_needed(messages, prompt)
                 # scene context injection moved to /scene_view command
 
             if system_injection and loop_count == 1:
@@ -641,9 +689,9 @@ def chat_with_thinking(
     with self._lock:
         self._memory.add_user_message(prompt)
         self._auto_trim_if_needed()
-        self._inject_personality_into_system_prompt()
-        messages = self._memory.get_context_messages()
+        messages = self._get_inference_messages()
         self._inject_dynamic_state_into_messages(messages)
+        self._inject_tool_policy_if_needed(messages, prompt)
         self._stats.begin_generation()
 
         try:
@@ -719,9 +767,9 @@ def stream_chat_with_thinking(
     with self._lock:
         self._memory.add_user_message(prompt)
         self._auto_trim_if_needed()
-        self._inject_personality_into_system_prompt()
-        messages = self._memory.get_context_messages()
+        messages = self._get_inference_messages()
         self._inject_dynamic_state_into_messages(messages)
+        self._inject_tool_policy_if_needed(messages, prompt)
         self._stats.begin_generation()
 
         try:

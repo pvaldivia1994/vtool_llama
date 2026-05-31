@@ -49,7 +49,8 @@ def list_available_models(self: ModelManager) -> list[dict[str, str]]:
 ModelManager.list_available_models = list_available_models
 
 
-def load_model(self: ModelManager, model_path: Optional[str] = None) -> None:
+def load_model(self: ModelManager, model_path: Optional[str] = None,
+               n_ctx_override: Optional[int] = None) -> None:
     with self._lock:
         if self._loading:
             self._log("MODEL", "Ya hay una carga en progreso, ignorando...")
@@ -63,7 +64,7 @@ def load_model(self: ModelManager, model_path: Optional[str] = None) -> None:
             self._log("MODEL", f"Cargando modelo: {path.name}")
 
             cuda_available = self._check_cuda()
-            kwargs = self._build_llama_kwargs(path, cuda_available)
+            kwargs = self._build_llama_kwargs(path, cuda_available, n_ctx_override=n_ctx_override)
 
             try:
                 from llama_cpp import Llama
@@ -102,6 +103,10 @@ def load_model(self: ModelManager, model_path: Optional[str] = None) -> None:
                 raise InferenceError(f"Error al cargar el modelo: {e}") from e
 
             self._model = model
+            self._n_keep = None  # nuevo modelo, nuevo core
+            # Guardar n_ctx del usuario la primera vez (no sobrescribir en recargas)
+            if self._user_n_ctx == 0:
+                self._user_n_ctx = self._config.n_ctx
             self._model_info = self._build_model_info(path)
 
             if hasattr(model, "tokenize"):
@@ -167,10 +172,12 @@ def _check_cuda(self: ModelManager) -> bool:
 ModelManager._check_cuda = _check_cuda
 
 
-def _build_llama_kwargs(self: ModelManager, path: Path, cuda_available: bool) -> dict:
+def _build_llama_kwargs(self: ModelManager, path: Path, cuda_available: bool,
+                         n_ctx_override: Optional[int] = None) -> dict:
+    n_ctx = n_ctx_override if n_ctx_override is not None else self._config.n_ctx
     kwargs = {
         "model_path": str(path),
-        "n_ctx": self._config.n_ctx,
+        "n_ctx": n_ctx,
         "n_batch": self._config.n_batch,
         "n_threads": self._config.threads,
         "flash_attn": self._config.flash_attn,
@@ -257,6 +264,7 @@ def unload_model(self: ModelManager) -> None:
         self._model = None
         self._tokenize_fn = None
         self._model_info = ModelInfo()
+        self._n_keep = None  # el core se pierde al descargar el modelo
 
         import gc
         gc.collect()
@@ -286,6 +294,27 @@ def reload_model(self: ModelManager) -> None:
         self.load_model(current_path)
 
 ModelManager.reload_model = reload_model
+
+
+def reload_model_with_expanded_ctx(self: ModelManager, expanded_n_ctx: int) -> None:
+    """Recarga el modelo con un n_ctx mayor para hacer el core invisible.
+
+    Solo debe llamarse desde _warmup_character_cache() cuando
+    expand_n_ctx_for_core=True y se acaba de medir n_keep.
+    """
+    with self._lock:
+        current_path = self._model_info.model_path
+        if not current_path:
+            self._log("MODEL", "No hay ruta de modelo para recargar.")
+            return
+
+        self._log("MODEL", f"Recargando con n_ctx expandido a {expanded_n_ctx} "
+                  f"(core {expanded_n_ctx - self._user_n_ctx} + user {self._user_n_ctx})")
+        self.unload_model()
+        self.load_model(current_path, n_ctx_override=expanded_n_ctx)
+        self._core_expanded = True
+
+ModelManager.reload_model_with_expanded_ctx = reload_model_with_expanded_ctx
 
 
 def switch_model(self: ModelManager, model_path: str) -> None:

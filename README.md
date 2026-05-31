@@ -175,6 +175,11 @@ Estos helpers estan escritos en ingles para mejorar obediencia tecnica, pero ord
 - `safe_max_response_tokens`: `response_capacity` limitado por `max_tokens`.
 - `budget_available`: alias legacy de `prompt_budget_available`.
 
+Además expone métricas del KV cache real (v6):
+- `n_keep`: tokens del core protegido en el KV cache.
+- `kv_cache_tokens`: tokens reales ocupados en el KV cache del modelo.
+- `kv_cache_usage_pct`: porcentaje de uso real del KV cache.
+
 Para diagnosticar por que el system prompt pesa demasiado, `get_prompt_layer_usage()` devuelve tokens por capa compilada del personaje. Cada entrada indica fase (`static` o `dynamic`), tokens, caracteres, si la capa es obligatoria y si es candidata a moverse a retrieval.
 
 Para reducir el peso fijo del system prompt puede activarse `compact_system_prompt`. En ese modo el runtime usa una `[CHARACTER CAPSULE]` compacta generada desde el DNA del personaje y deja fuera del system inicial capas pesadas como soul completo, few-shot examples, memoria larga y detalles psicologicos secundarios.
@@ -194,6 +199,10 @@ Las tools internas se activan por trigger en vez de estar siempre visibles. El f
 ```
 
 No hay formatos legacy textuales habilitados.
+
+La política de uso de tools (`TOOL_USAGE_POLICY`) ya no se inyecta en el system prompt fijo (v7). Se agrega como mensaje `system` dinámico solo cuando hay tools activas, manteniendo el core del KV cache estable entre turnos.
+
+`get_tool_stats()` expone métricas de herramientas: `structured_calls`, `text_calls`, `memory_saved`, `hallucinations`, `coercion_retries`.
 
 ### Modelo
 

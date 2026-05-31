@@ -1,0 +1,30 @@
+{{ bos_token }}
+{# character_v3.jinja — Optimizado para roleplay con modelos de formato <|turn|> #}
+{% if messages and messages[0].role == "system" %}
+<|turn>system
+{{ messages[0].content }}
+<turn|>
+{% set loop_messages = messages[1:] %}
+{% else %}
+{% set loop_messages = messages %}
+{% endif %}
+
+{% for message in loop_messages %}
+{% if message.role == "user" %}
+<|turn>user
+{{ message.content }}
+<turn|>
+{% elif message.role == "assistant" %}
+<|turn>model
+{{ message.content }}
+<turn|>
+{% elif message.role == "tool" %}
+<|turn>tool
+{{ message.content }}
+<turn|>
+{% endif %}
+{% endfor %}
+
+{% if add_generation_prompt %}
+<|turn>model
+{% endif %}

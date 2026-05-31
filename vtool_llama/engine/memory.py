@@ -266,19 +266,10 @@ def _auto_trim_if_needed(self: VToolLlama) -> None:
     ]
 
     digest = ""
-    saved_state = None
-    raw_model = getattr(self._model_manager, "_model", None)
-    try:
-        if raw_model and hasattr(raw_model, "save_state"):
-            saved_state = raw_model.save_state()
-        if len(digest_candidates) > 2:
-            digest = _digest_with_llm(digest_candidates)
-    finally:
-        if saved_state is not None and raw_model and hasattr(raw_model, "load_state"):
-            try:
-                raw_model.load_state(saved_state)
-            except Exception as e:
-                self._log_debug("MEMORY", f"No se pudo restaurar KV cache tras context digest: {e}")
+    if len(digest_candidates) > 2:
+        digest = _digest_with_llm(digest_candidates)
+    # El core sobrevive al digest gracias a reset_keep()
+    # (ya no necesitamos save_state/load_state)
 
     if digest:
         history = self.get_chat_history(limit=100, include_context=False)

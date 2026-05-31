@@ -81,6 +81,23 @@ class ToolExecutionManager:
         self._log_debug = log_debug_fn or (lambda *_: None)
         self._rebuild = rebuild_fn
 
+        # Metricas de tools (v7)
+        self._structured_count = 0
+        self._text_count = 0
+        self._memory_saved_count = 0
+        self._hallucination_count = 0
+        self._coercion_count = 0
+
+    @property
+    def stats(self) -> dict:
+        return {
+            "structured_calls": self._structured_count,
+            "text_calls": self._text_count,
+            "memory_saved": self._memory_saved_count,
+            "hallucinations": self._hallucination_count,
+            "coercion_retries": self._coercion_count,
+        }
+
     # ----------------------------------------------------------
     # Structured tool_calls (OpenAI format)
     # ----------------------------------------------------------
@@ -111,11 +128,13 @@ class ToolExecutionManager:
             fn_args = self._safe_json_parse(fn_args_raw)
 
             if fn_name == "store_long_term_memory":
+                self._structured_count += 1
                 execute_text_tool(
                     fn_name, fn_args,
                     add_memory_fn=self._add_memory,
                     log_fn=self._log_info,
                 )
+                self._memory_saved_count += 1
                 result["memory_saved"] = True
                 result["internal_found"] = True
 
@@ -160,11 +179,13 @@ class ToolExecutionManager:
 
         for fn_name, fn_args in text_tools:
             if fn_name == "store_long_term_memory":
+                self._text_count += 1
                 execute_text_tool(
                     fn_name, fn_args,
                     add_memory_fn=self._add_memory,
                     log_fn=self._log_info,
                 )
+                self._memory_saved_count += 1
                 result["memory_saved"] = True
                 result["internal_found"] = True
 
@@ -202,7 +223,10 @@ class ToolExecutionManager:
         if had_tool_calls or had_text_tools:
             return False
 
-        return has_memory_trigger(user_prompt)
+        if has_memory_trigger(user_prompt):
+            self._coercion_count += 1
+            return True
+        return False
 
     def build_coercion_prompt(self, user_prompt: str) -> str:
         """
@@ -243,5 +267,6 @@ class ToolExecutionManager:
         }
         if fn_name in valid_names:
             return True
+        self._hallucination_count += 1
         self._log_debug("TOOL", f"Tool call '{fn_name}' no valida (alucinacion)")
         return False
