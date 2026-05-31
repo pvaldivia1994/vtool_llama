@@ -145,6 +145,30 @@ class TestAutoTrimSmallContext:
 
             store.close()
 
+    def test_context_digest_uses_helper_prompts(self):
+        """Verifica que el digest use los prompts helper versionados."""
+        from unittest.mock import MagicMock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            llm, store = _make_llm(tmp)
+
+            llm._memory.system_prompt = "[SYSTEM] Eres un personaje de prueba."
+            llm._memory.clear()
+            llm._model_manager.generate = MagicMock(return_value={
+                "choices": [{"message": {"content": "Hechos estables:\n- El usuario conversa en español."}}]
+            })
+
+            _fill_memory(llm, 15)
+            llm._auto_trim_if_needed()
+
+            sent_messages = llm._model_manager.generate.call_args.kwargs["messages"]
+            assert "context compressor" in sent_messages[0]["content"]
+            assert "Return the digest in Spanish" in sent_messages[0]["content"]
+            assert "CONVERSATION TO COMPRESS:" in sent_messages[1]["content"]
+            assert "Mensaje de prueba" in sent_messages[1]["content"]
+
+            store.close()
+
     def test_trim_targets_60_percent(self):
         """Verifica que el trim recorte hasta ~60% del effective_limit."""
         with tempfile.TemporaryDirectory() as tmp:

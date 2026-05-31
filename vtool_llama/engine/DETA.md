@@ -142,9 +142,9 @@ Define `VToolLlama`, la clase principal. Constructor inicializa todos los gestor
  | `_record_stats(result)` / `_record_stats_from_stream(stream, text)` | Registro de estadísticas |
  | `_log_generation_stats()` | Muestra stats en debug |
  
- ### `chat_memory.py` — ChatMemory
- 
- Ring buffer en RAM con `deque(maxlen=chat_memory_limit+1)`. Cada `append()` verifica que el system prompt no haya sido descartado via `_ensure_system_prompt()`.
+### `chat_memory.py` — ChatMemory
+
+Ring buffer en RAM con `deque(maxlen=chat_memory_limit+1)`. Cada `append()` verifica que el system prompt no haya sido descartado via `_ensure_system_prompt()`.
  
  | Método | Rol |
  |--------|-----|
@@ -152,10 +152,36 @@ Define `VToolLlama`, la clase principal. Constructor inicializa todos los gestor
  | `add_assistant_message(content, tool_calls)` | Agrega respuesta + sync SQLite + `_ensure_system_prompt()` |
  | `add_tool_message(content, id)` | Agrega respuesta de herramienta + sync SQLite + `_ensure_system_prompt()` |
  | `get_context_messages()` | Retorna mensajes para inferencia |
- | `clear()` | Preserva system prompt, elimina el resto |
- | `_ensure_system_prompt()` | Reinserta system prompt si fue descartado por el deque |
+| `clear()` | Preserva system prompt, elimina el resto |
+| `_ensure_system_prompt()` | Reinserta system prompt si fue descartado por el deque |
+
+### `memory.py` — Trim y Context Digest
+
+El trim automatico es una proteccion obligatoria del pipeline. La clave `auto_trim_context` puede seguir existiendo en config por compatibilidad, pero `_auto_trim_if_needed()` no debe depender de ella para decidir si protege el contexto.
+
+Cuando el contexto se acerca al limite efectivo (`n_ctx - context_reserve_tokens`), el flujo actual:
+
+1. Cuenta tokens sobre `ChatMemory.get_context_messages()` usando `ModelManager.count_messages_tokens()` si esta disponible.
+2. Protege siempre el ultimo mensaje `user`.
+3. Toma como candidatos solo mensajes no-system que pueden salir del contexto.
+4. Genera un `context digest` estructurado con `ModelManager.generate(...)`.
+5. Guarda/restaura KV cache con `save_state/load_state` si el backend lo soporta.
+6. Inserta un unico bloque system `[RESUMEN DE CONVERSACION PREVIA]` y elimina digests anteriores.
+7. Guarda el digest en SQLite con `ChatStore.add_summary(..., reason="trim")`.
+8. Recorta mensajes antiguos hasta volver al presupuesto.
+
+El digest no es un resumen narrativo; es memoria operacional en secciones fijas: hechos estables, estado actual, preferencias, relacion y tono, hilos abiertos y descarte.
+
+Los prompts tecnicos del digest se cargan desde `config/prompts/helpers/`:
+
+| Archivo | Rol |
+|---|---|
+| `context_digest_system.md` | Instrucciones tecnicas del compresor, escritas en ingles |
+| `context_digest_user.md` | Template del mensaje user con placeholder `#SOURCE` |
+
+La salida del digest debe permanecer en espanol aunque las instrucciones tecnicas internas esten en ingles.
  
- ### `config_manager.py` — ConfigManager
+### `config_manager.py` — ConfigManager
  
  | Método | Rol |
  |--------|-----|
@@ -234,7 +260,7 @@ Sigue siendo un ring buffer en RAM, pero ahora puede sincronizar con SQLite:
 | `base.py` | `chat_memory`, `config_manager`, `logger_manager`, `stats_manager`, `slash_registry`, `model`, `character`, `soul`, `tools`, `db`, `utils` |
 | `chat.py` | `base`, `tools`, `exceptions` |
 | `character.py` | `base`, `tools`, `db`, `utils`, `context_builder`, `retrieval` |
-| `memory.py` | `base` |
+| `memory.py` | `base`, `types`, `config/prompts/helpers` |
 | `internal.py` | `base` |
 | `slash_commands.py` | `base` |
 | `context_builder.py` | `retrieval` |
@@ -271,6 +297,7 @@ VToolLlama.load_character(name)
 
 VToolLlama.chat(prompt)
 ├── ChatMemory.add_user_message()  → escribe a SQLite + RAM
+├── _auto_trim_if_needed()          → context digest + recorte obligatorio si hace falta
 ├── ModelManager.generate(messages) → infiere
 ├── ChatMemory.add_assistant_message() → escribe a SQLite + RAM
 ├── Auto-summary cada N turnos     → SQLite summaries

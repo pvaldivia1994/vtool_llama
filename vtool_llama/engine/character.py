@@ -24,7 +24,12 @@ def list_characters(self: VToolLlama) -> list[dict]:
 VToolLlama.list_characters = list_characters
 
 
-def load_character(self: VToolLlama, name: str, semantic_memory: bool = False) -> object:
+def load_character(
+    self: VToolLlama,
+    name: str,
+    semantic_memory: bool = False,
+    resume_conversation: bool = True,
+) -> object:
     self._character_manager.cancel_load()
     result = self._character_manager.load_character(name)
 
@@ -34,6 +39,42 @@ def load_character(self: VToolLlama, name: str, semantic_memory: bool = False) -
         if merged.system_prompt != self._config.system_prompt:
             self._log_debug("CONFIG", f"system_prompt overrideado por '{name}/config.json'")
         self._config = merged
+        self._model_manager._config = merged
+        self._soul_generator._config = merged
+        self._memory._history_limit = merged.chat_memory_limit
+
+    old_store = getattr(self, "_chat_store", None)
+    if old_store:
+        try:
+            old_store.close()
+        except Exception:
+            pass
+    old_chroma = getattr(self, "_semantic_chroma", None)
+    if old_chroma:
+        try:
+            old_chroma.close()
+        except Exception:
+            pass
+
+    tpl_file = self._config.chat_template_file
+    if tpl_file and self._model_manager.is_loaded:
+        tpl_path = Path(tpl_file)
+        if not tpl_path.is_absolute():
+            tpl_path = Path(__file__).parent.parent / "config" / tpl_file
+        if tpl_path.exists():
+            try:
+                from llama_cpp.llama_chat_format import Jinja2ChatFormatter
+                template_str = tpl_path.read_text(encoding="utf-8")
+                eos = self._model_manager._model.tokenizer.eos_token if hasattr(self._model_manager._model, 'tokenizer') else ""
+                bos = self._model_manager._model.tokenizer.bos_token if hasattr(self._model_manager._model, 'tokenizer') else ""
+                self._model_manager._model.chat_handler = Jinja2ChatFormatter(
+                    template=template_str,
+                    eos_token=eos,
+                    bos_token=bos,
+                )
+                self._log_debug("MODEL", f"Chat template aplicado: {tpl_path}")
+            except Exception as e:
+                self._log_warning(f"No se pudo aplicar chat template: {e}")
 
     # Inicializar SQLite event store + ContextBuilder
     if char_dir:
@@ -78,7 +119,11 @@ def load_character(self: VToolLlama, name: str, semantic_memory: bool = False) -
             strategies=strategies,
         )
 
-        conv = self._chat_store.get_or_create_conversation(name)
+        conv = (
+            self._chat_store.get_or_create_conversation(name)
+            if resume_conversation
+            else self._chat_store.create_conversation(name)
+        )
 
         self._memory.bind_store(
             store=self._chat_store,
@@ -102,26 +147,6 @@ def load_character(self: VToolLlama, name: str, semantic_memory: bool = False) -
     self._inject_personality_into_system_prompt()
 
     # Aplicar chat template Jinja personalizado si está configurado
-    tpl_file = self._config.chat_template_file
-    if tpl_file and self._model_manager.is_loaded:
-        tpl_path = Path(tpl_file)
-        if not tpl_path.is_absolute():
-            tpl_path = Path(__file__).parent.parent / "config" / tpl_file
-        if tpl_path.exists():
-            try:
-                from llama_cpp.llama_chat_format import Jinja2ChatFormatter
-                template_str = tpl_path.read_text(encoding="utf-8")
-                eos = self._model_manager._model.tokenizer.eos_token if hasattr(self._model_manager._model, 'tokenizer') else ""
-                bos = self._model_manager._model.tokenizer.bos_token if hasattr(self._model_manager._model, 'tokenizer') else ""
-                self._model_manager._model.chat_handler = Jinja2ChatFormatter(
-                    template=template_str,
-                    eos_token=eos,
-                    bos_token=bos,
-                )
-                self._log_debug("MODEL", f"Chat template aplicado: {tpl_path}")
-            except Exception as e:
-                self._log_warning(f"No se pudo aplicar chat template: {e}")
-
     # Reconstruir contexto desde SQLite
     if self._context_builder and self._chat_store:
         token_budget = self._config.n_ctx - self._config.context_reserve_tokens
@@ -348,6 +373,7 @@ def _warmup_character_cache(self: VToolLlama, prompt: Optional[str] = None) -> N
         return
 
     base_kv_path = char_dir / "_memory" / "base.state"
+    meta_path = char_dir / "_memory" / "base.state.meta.json"
 
     # 1. Compilar prompt completo
     if prompt is None:
@@ -362,11 +388,42 @@ def _warmup_character_cache(self: VToolLlama, prompt: Optional[str] = None) -> N
             yaml_lines.append(f"  {line}")
         yaml_path.write_text('\n'.join(yaml_lines) + '\n', encoding='utf-8')
 
+    import hashlib
+    prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    model_path = self._model_manager.model_info.model_path
+    template_file = self._config.chat_template_file or ""
+    template_hash = ""
+    if template_file:
+        tpl_path = Path(template_file)
+        if not tpl_path.is_absolute():
+            tpl_path = Path(__file__).parent.parent / "config" / template_file
+        if tpl_path.exists():
+            template_hash = hashlib.sha256(tpl_path.read_bytes()).hexdigest()
+
+    expected_meta = {
+        "prompt_hash": prompt_hash,
+        "model_path": model_path,
+        "chat_template_file": template_file,
+        "chat_template_hash": template_hash,
+        "n_ctx": self._config.n_ctx,
+    }
+    current_meta = {}
+    if meta_path.exists():
+        try:
+            current_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            current_meta = {}
+
+    cache_valid = base_kv_path.exists() and all(
+        current_meta.get(k) == v for k, v in expected_meta.items()
+    )
+
     # 3. Warmup completo del prompt y guardar como base.state
-    if not base_kv_path.exists():
+    if not cache_valid:
         self._log_debug("STATE", "Generando KV Cache Base (prompt completo)...")
         self._model_manager.warmup_system_prompt(prompt)
         self._model_manager.save_kv_state(str(base_kv_path))
+        meta_path.write_text(json.dumps(expected_meta, ensure_ascii=False, indent=2), encoding="utf-8")
     else:
         self._model_manager.load_kv_state(str(base_kv_path))
 

@@ -212,10 +212,14 @@ class SoulGenerator:
             raise ValueError(f"Personaje '{character_name}' no encontrado")
 
         self._char_dir = char_dir
-        soul_path = char_dir / "soul.json"
-        progress_path = char_dir / "memory" / "soul_progress.json"
+        soul_dir = char_dir / "soul"
+        soul_dir.mkdir(parents=True, exist_ok=True)
+        soul_path = soul_dir / "soul.json"
+        legacy_soul_path = char_dir / "soul.json"
+        progress_path = soul_dir / "soul_progress.json"
 
-        if soul_path.exists() and not force_regenerate:
+        existing_soul_path = soul_path if soul_path.exists() else legacy_soul_path
+        if existing_soul_path.exists() and not force_regenerate:
             raise ValueError(
                 f"Soul ya existe para '{character_name}'. "
                 "Usa force_regenerate=True para regenerar."
@@ -235,7 +239,7 @@ class SoulGenerator:
         if age_months < 12:
             raise ValueError(f"Personaje demasiado joven ({age_months//12} anios) para generar alma.")
 
-        self._chroma = ChromaStore(char_dir / "memory" / "life_timeline", "life_timeline",
+        self._chroma = ChromaStore(soul_dir / "life_timeline", "life_timeline",
                                     log_fn=lambda m: self._log_debug("SOUL", m))
         chroma_ok = self._chroma.initialize()
 
@@ -247,6 +251,8 @@ class SoulGenerator:
                 self._chroma.clear()
             if soul_path.exists():
                 soul_path.unlink()
+            if legacy_soul_path.exists():
+                legacy_soul_path.unlink()
             history_path = char_dir / "memory" / "life_events.json"
             if history_path.exists():
                 try:
@@ -393,17 +399,20 @@ class SoulGenerator:
 
     def has_soul(self, character_name: str) -> bool:
         char_dir = self._cm._base_dir / character_name
-        soul_path = char_dir / "soul.json"
-        return soul_path.exists()
+        return (char_dir / "soul" / "soul.json").exists() or (char_dir / "soul.json").exists()
 
     def has_timeline_db(self, character_name: str) -> bool:
         char_dir = self._cm._base_dir / character_name
-        chroma_path = char_dir / "memory" / "life_timeline"
-        return chroma_path.exists()
+        return (
+            (char_dir / "soul" / "life_timeline").exists()
+            or (char_dir / "memory" / "life_timeline").exists()
+        )
 
     def get_soul_data(self, character_name: str) -> Optional[dict]:
         char_dir = self._cm._base_dir / character_name
-        soul_path = char_dir / "soul.json"
+        soul_path = char_dir / "soul" / "soul.json"
+        if not soul_path.exists():
+            soul_path = char_dir / "soul.json"
         if not soul_path.exists():
             return None
         try:
@@ -414,5 +423,7 @@ class SoulGenerator:
 
     def get_soul_path(self, character_name: str) -> Optional[Path]:
         char_dir = self._cm._base_dir / character_name
-        soul_path = char_dir / "soul.json"
+        soul_path = char_dir / "soul" / "soul.json"
+        if not soul_path.exists():
+            soul_path = char_dir / "soul.json"
         return soul_path if soul_path.exists() else None

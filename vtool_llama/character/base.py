@@ -123,7 +123,10 @@ class CharacterManager:
             entry["role"] = identity_data.get("role", "")
             entry["background"] = identity_data.get("background", "")
 
-            entry["has_soul"] = (d / "soul" / "soul.json").exists()
+            entry["has_soul"] = (
+                (d / "soul" / "soul.json").exists()
+                or (d / "soul.json").exists()
+            )
 
             chars.append(entry)
 

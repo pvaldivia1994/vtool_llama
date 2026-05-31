@@ -151,11 +151,20 @@ Genome (13 ejes de temperamento innato)
 | `export_memory_json(path=None)` | Exporta historial a JSON |
 | `import_memory_json(str_or_path)` | Importa historial desde JSON |
 | `set_system_prompt(prompt)` | Cambia system prompt en caliente |
-| `trim_memory()` | Recorta contexto según presupuesto de tokens |
+| `trim_memory()` | Metodo manual legacy; el recorte real ocurre automaticamente en el pipeline |
 | `save_episode()` | Guarda snapshot episódico con resumen LLM |
 | `list_episodes()` | Lista episodios guardados |
 | `load_episode(id)` | Rollback a episodio. Ejecuta un **rollback cronológico** en la DB vectorial de chat (ChromaDB) eliminando los recuerdos posteriores al hito. |
 | `delete_episode(id)` | Elimina snapshot |
+
+El auto-trim es una proteccion interna siempre activa. Cuando el contexto se acerca al limite efectivo (`n_ctx - context_reserve_tokens`), genera un `context digest` estructurado, protege el ultimo mensaje del usuario, reemplaza digests anteriores y recorta mensajes antiguos hasta volver al presupuesto. El digest se guarda en SQLite y tambien se inyecta como un unico bloque system `[RESUMEN DE CONVERSACION PREVIA]`.
+
+Los prompts tecnicos del digest viven en:
+
+- `vtool_llama/config/prompts/helpers/context_digest_system.md`
+- `vtool_llama/config/prompts/helpers/context_digest_user.md`
+
+Estos helpers estan escritos en ingles para mejorar obediencia tecnica, pero ordenan que el digest final salga en espanol para mantener continuidad con conversaciones en espanol.
 
 ### Modelo
 
@@ -229,6 +238,8 @@ Genome (13 ejes de temperamento innato)
   "characters_directory": ""
 }
 ```
+
+`auto_trim_context` se conserva por compatibilidad de configuracion, pero no debe usarse para desactivar la proteccion de contexto: el comportamiento esperado es siempre equivalente a `true`.
 
 ## Estructura de archivos por personaje
 

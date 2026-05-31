@@ -30,7 +30,9 @@ class RuntimeSoulAccessor:
         return self._active
 
     def initialize(self) -> bool:
-        soul_path = self._char_dir / "soul.json"
+        soul_path = self._char_dir / "soul" / "soul.json"
+        if not soul_path.exists():
+            soul_path = self._char_dir / "soul.json"
         if not soul_path.exists():
             return False
 
@@ -40,8 +42,13 @@ class RuntimeSoulAccessor:
         except Exception:
             return False
 
+        chroma_path = self._char_dir / "soul" / "life_timeline"
+        legacy_chroma_path = self._char_dir / "memory" / "life_timeline"
+        if not chroma_path.exists() and legacy_chroma_path.exists():
+            chroma_path = legacy_chroma_path
+
         self._chroma = ChromaStore(
-            self._char_dir / "memory" / "life_timeline",
+            chroma_path,
             "life_timeline",
             log_fn=lambda m: self._log("SOUL", m),
         )

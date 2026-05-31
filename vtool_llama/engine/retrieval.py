@@ -107,7 +107,13 @@ class SemanticRetrievalStrategy(RetrievalStrategy):
         if not query:
             return PromptSection(type="semantic", priority=self.priority, tokens=0, messages=[])
 
-        results = self._chroma_store.search(query, top_k=3)
+        where = {
+            "$and": [
+                {"conversation_id": conversation_id},
+                {"branch_id": branch_id},
+            ]
+        }
+        results = self._chroma_store.search(query, top_k=3, where=where)
         if not results:
             return PromptSection(type="semantic", priority=self.priority, tokens=0, messages=[])
 

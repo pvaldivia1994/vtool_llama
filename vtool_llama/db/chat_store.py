@@ -156,6 +156,10 @@ class ChatStore:
             if row is not None:
                 return Conversation(**dict(row))
 
+            return self.create_conversation(character_name)
+
+    def create_conversation(self, character_name: str) -> Conversation:
+        with self._tx() as conn:
             conv_id = uuid.uuid4().hex[:12]
             now = datetime.now(timezone.utc).isoformat()
             conn.execute(
@@ -275,6 +279,19 @@ class ChatStore:
             ).fetchall()
             return [ChatMessage(**dict(r)) for r in rows]
 
+    def get_branch_messages_since(
+        self, conversation_id: str, branch_id: str, since_id: int = 0, limit: int = 50
+    ) -> list[ChatMessage]:
+        with self._tx() as conn:
+            rows = conn.execute(
+                """SELECT * FROM messages
+                   WHERE conversation_id = ? AND branch_id = ?
+                     AND id > ? AND status = 'active'
+                   ORDER BY id ASC LIMIT ?""",
+                (conversation_id, branch_id, since_id, limit),
+            ).fetchall()
+            return [ChatMessage(**dict(r)) for r in rows]
+
     def get_active_branch_messages(
         self, conversation_id: str, branch_id: str, leaf_id: int, limit: int = 50
     ) -> list[ChatMessage]:
@@ -384,6 +401,16 @@ class ChatStore:
         with self._tx() as conn:
             cur = conn.execute("DELETE FROM summaries WHERE id = ?", (summary_id,))
             return cur.rowcount > 0
+
+    def update_summary_end(self, summary_id: int, end_message_id: int) -> None:
+        with self._tx() as conn:
+            conn.execute(
+                "UPDATE summaries SET end_message_id = ? WHERE id = ?",
+                (end_message_id, summary_id),
+            )
+
+    def mark_summary_delivered(self, summary_id: int, delivered_message_id: int) -> None:
+        self.update_summary_end(summary_id, delivered_message_id)
 
     # ------------------------------------------------------------------
     # Semantic sync (ChromaDB indexación manual)

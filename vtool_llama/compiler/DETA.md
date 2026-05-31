@@ -96,6 +96,17 @@ Incluye `_render_template()` que carga templates `.md` numerados desde `config/p
 | `_resolve_beliefs_contradictions()`, `_resolve_soul()`, `_resolve_psychology()`, `_resolve_persona()`, `_resolve_active_mods_description()`, `_resolve_memory()`, `_resolve_episode()` | Capas dinámicas (sin template) | — |
 | `_resolve_persona()` | `[EXPRESSION STATE]` | No |
 
+### Helpers de prompts internos
+
+`config/prompts/helpers/` contiene prompts tecnicos reutilizables que no forman parte directa del system prompt estatico del personaje. Siguen el mismo criterio de versionado que los templates `.md`, pero se consumen desde modulos internos.
+
+| Archivo | Consumidor | Rol |
+|--------|------------|-----|
+| `helpers/context_digest_system.md` | `engine/memory.py` | System prompt tecnico para comprimir contexto |
+| `helpers/context_digest_user.md` | `engine/memory.py` | Template user con placeholder `#SOURCE` para la conversacion a comprimir |
+
+Convencion recomendada: instrucciones tecnicas internas en ingles para mejorar obediencia del modelo, salida solicitada en espanol cuando el resultado vuelve al contexto conversacional del personaje.
+
 ## Sistema de Resolución de Conflictos
 
 Cuando un Mod activo apunta a una capa específica (`target_layer`), se sobreescribe el valor original:

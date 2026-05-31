@@ -55,6 +55,28 @@ class TestOptimizations:
             mock_formatter.assert_called_once_with(messages=messages)
             mock_count.assert_called_once_with("<formatted_prompt>")
 
+    def test_generate_resets_model_state_before_completion(self):
+        """Evita que el KV cache de una respuesta anterior contamine el turno actual."""
+        config = MagicMock()
+        config.max_tokens = 128
+        config.temperature = 0.7
+        config.top_p = 0.9
+        config.top_k = 40
+        config.repeat_penalty = 1.1
+
+        model_mgr = ModelManager(config=config, logger_fn=MagicMock(), error_fn=MagicMock())
+        mock_model = MagicMock()
+        mock_model.create_chat_completion.return_value = {
+            "choices": [{"message": {"content": "ok"}}]
+        }
+        model_mgr._model = mock_model
+
+        result = model_mgr.generate([{"role": "user", "content": "Mi nombre es LiuniK"}])
+
+        mock_model.reset.assert_called_once()
+        mock_model.create_chat_completion.assert_called_once()
+        assert result["choices"][0]["message"]["content"] == "ok"
+
     def test_compiler_split_static_and_dynamic(self):
         """Verifica que compile_static_prompt y compile_dynamic_prompt dividan las secciones estáticas y dinámicas."""
         manager = MagicMock(spec=CharacterManager)

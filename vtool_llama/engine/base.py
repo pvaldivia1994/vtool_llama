@@ -406,8 +406,8 @@ class VToolLlama:
                 return
 
             last_id = sync.get("last_synced_message_id", 0)
-            new_msgs = self._chat_store.get_messages_since(
-                self._memory._conversation_id, since_id=last_id, limit=50
+            new_msgs = self._chat_store.get_branch_messages_since(
+                self._memory._conversation_id, self._memory._branch_id, since_id=last_id, limit=50
             )
 
             # Auto-indexar si hay al menos 10 mensajes nuevos (~5 turnos)
@@ -454,14 +454,13 @@ class VToolLlama:
             self._log_debug("SYNC", f"Sync incremental desde message_id {last_id}")
 
         # Obtener mensajes nuevos
-        new_msgs = self._chat_store.get_messages_since(
-            self._memory._conversation_id, since_id=last_id, limit=500
+        new_msgs = self._chat_store.get_branch_messages_since(
+            self._memory._conversation_id, self._memory._branch_id, since_id=last_id, limit=500
         )
         if not new_msgs:
             return 0
 
         # Agrupar en chunks de ~10 mensajes
-        import uuid
         chunk_size = 10
         indexed = 0
 
@@ -471,7 +470,10 @@ class VToolLlama:
             if not text.strip():
                 continue
 
-            doc_id = uuid.uuid4().hex[:12]
+            doc_id = (
+                f"conv_{self._memory._conversation_id}_"
+                f"{self._memory._branch_id}_{chunk[0].id}_{chunk[-1].id}"
+            )
             self._semantic_chroma.add_document(
                 doc_id=doc_id,
                 document=f"[Conversación - {conv.character_name}]\n{text}",
@@ -485,9 +487,13 @@ class VToolLlama:
             indexed += 1
 
         # Actualizar sync state
-        last_msg_id = new_msgs[-1].id
         import hashlib
-        sync_hash = hashlib.sha256(str(last_msg_id).encode()).hexdigest()[:12]
+        last_msg_id = new_msgs[-1].id
+        sync_payload = "|".join(
+            f"{m.id}:{m.branch_id}:{m.role}:{hashlib.sha256((m.content or '').encode('utf-8')).hexdigest()}"
+            for m in new_msgs
+        )
+        sync_hash = hashlib.sha256(sync_payload.encode("utf-8")).hexdigest()[:12]
         self._chat_store.update_semantic_sync(
             self._memory._conversation_id,
             last_msg_id,

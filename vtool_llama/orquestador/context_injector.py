@@ -144,12 +144,12 @@ class ContextInjector:
         """Marca entradas como entregadas y las inserta como mensajes
         en el historial de chat (role='context') para mantener
         la secuencia cronológica."""
-        cid = self._new_id()
         for eid in entry_ids:
+            delivered_id = 0
             # Obtener la entrada antes de marcarla
             for s in self._store.get_summaries(self._conversation_id, self._branch_id, limit=500):
                 if s.id == eid:
-                    self._store.add_message(
+                    delivered_id = self._store.add_message(
                         conversation_id=self._conversation_id,
                         branch_id=self._branch_id,
                         role="context",
@@ -158,10 +158,8 @@ class ContextInjector:
                         token_count=0,
                     )
                     break
-            self._store._tx().__enter__().execute(
-                "UPDATE summaries SET end_message_id = ? WHERE id = ?",
-                (cid, eid),
-            )
+            if delivered_id:
+                self._store.mark_summary_delivered(eid, delivered_id)
 
     def get_active_contexts(self, include_scene: bool = True) -> list[str]:
         """Solo entradas ACTIVAS (no entregadas)."""
