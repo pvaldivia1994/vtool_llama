@@ -171,6 +171,15 @@ def load_character(
                 branch_id=conv.active_branch_id,
                 leaf_message_id=conv.active_leaf_message_id,
             )
+
+            # Restaurar _user_tag desde SQLite (persiste entre recargas)
+            if self._memory._conversation_id:
+                saved_tag = self._chat_store.get_state(
+                    self._memory._conversation_id, "user_tag", ""
+                )
+                if saved_tag:
+                    self._user_tag = saved_tag
+                    self._log_debug("TAG", f"_user_tag restaurado: [{saved_tag}]")
         else:
             self._chat_store = None
             self._context_builder = None

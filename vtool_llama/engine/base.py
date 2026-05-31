@@ -153,6 +153,11 @@ class VToolLlama:
         self._user_tag: str = "PLAYER"
 
         # ------------------------------------------------------------------
+        # 6g. Buffer para #char (pensamiento del personaje)
+        # ------------------------------------------------------------------
+        self._char_thought_buffer: list[tuple[str, str]] = []
+
+        # ------------------------------------------------------------------
         # 7. Short memory (últimos N mensajes para contexto inmediato)
         # ------------------------------------------------------------------
         self._short_memory: deque[dict] = deque(
@@ -164,6 +169,13 @@ class VToolLlama:
         # ------------------------------------------------------------------
         self._slash_commands = SlashCommandRegistry()
         self._register_default_slash_commands()
+
+        # ------------------------------------------------------------------
+        # 8b. Inline Processor (v15)
+        # ------------------------------------------------------------------
+        from .inline import InlineProcessor, register_default_hash_commands
+        self._inline_processor = InlineProcessor()
+        register_default_hash_commands(self._inline_processor)
 
         # ------------------------------------------------------------------
         # 9. Cargar modelo automáticamente si se solicita

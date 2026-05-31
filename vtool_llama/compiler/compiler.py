@@ -94,10 +94,7 @@ class CharacterCompiler:
         # 1. [SYSTEM CORE]
         parts.append(self._resolve_system_core())
 
-        # 2. [SECTION REFERENCE] — guía temprana
-        defs = self._resolve_definitions()
-        if defs:
-            parts.append(defs)
+        # 2. [SECTION REFERENCE] eliminado — no aporta valor, solo era un índice
 
         # 3–6. Behavioral layers (anti_assistant.yaml)
         parts.append(self._resolve_anti_assistant())
@@ -138,9 +135,6 @@ class CharacterCompiler:
 
         # 23. [FEW SHOT EXAMPLES]
         self._try_add(parts, self._resolve_few_shot_examples())
-
-        # v13: [GUÍA DE TAGS] — definiciones de tags semánticos
-        self._try_add(parts, self._resolve_tag_guide())
 
         # Capas estáticas de Soul
         self._try_add(parts, self._resolve_soul())

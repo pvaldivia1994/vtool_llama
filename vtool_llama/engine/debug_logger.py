@@ -80,7 +80,8 @@ class CharacterDebugLogger:
             return
         self._append("### Mensajes enviados al modelo\n\n")
 
-        # Comprimir system prompt repetido
+        # Comprimir system prompts: primera vez muestra [Cargado de base_prompt.yaml],
+        # repeticiones muestran [IGUAL AL ANTERIOR]
         current_system = None
         compressed = copy.deepcopy(messages)
         for msg in compressed:
@@ -88,15 +89,15 @@ class CharacterDebugLogger:
                 content = msg.get("content", "")
                 if current_system is None:
                     current_system = content
-                if self._last_system_prompt is not None and content == self._last_system_prompt:
+                    msg["content"] = "[Cargado de base_prompt.yaml]"
+                elif self._last_system_prompt is not None and content == self._last_system_prompt:
                     msg["content"] = "[IGUAL AL ANTERIOR]"
 
         if current_system is not None:
             self._last_system_prompt = current_system
 
-        self._append(f"```json\n{json.dumps(compressed, ensure_ascii=False, indent=2)[:5000]}\n```\n\n")
-        if len(json.dumps(compressed, ensure_ascii=False)) > 5000:
-            self._append(f"*Log truncado a 5000 caracteres. Mensajes totales: {len(compressed)}*\n\n")
+        log_text = json.dumps(compressed, ensure_ascii=False, indent=2)
+        self._append(f"```json\n{log_text}\n```\n\n")
 
     def log_model_response(self, response: str) -> None:
         """Registra la respuesta del modelo."""

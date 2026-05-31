@@ -15,14 +15,41 @@ from ..tools import (
 
 
 def _get_inference_messages(self: VToolLlama) -> list[dict]:
-    """Retorna los mensajes para inferencia."""
+    """Retorna los mensajes para inferencia con tags correctos (v15).
+
+    - Usa self._user_tag en vez de [USER] hardcodeado
+    - Detecta multi-personaje: [ROBERTO] texto → [ROBERTO][SPEAK]
+    - Salta mensajes ya pre-tagueados por InlineProcessor
+    """
+    import re
     messages = self._memory.get_context_messages()
-    # v10: anteponer tag semántico a mensajes del usuario
+    tag = self._user_tag.upper() if self._user_tag else "PLAYER"
+
     for msg in messages:
-        if msg.get("role") == "user":
-            content = msg.get("content", "")
-            if not content.startswith("[USER]") and not content.startswith("[PLAYER]"):
-                msg["content"] = f"[USER] {content}"
+        if msg.get("role") != "user":
+            continue
+        content = msg.get("content", "")
+        if not content:
+            continue
+
+        # Ya pre-tagueado por InlineProcessor (ej: [PLAYER][SPEAK] Hola)
+        if re.match(r'^\[\w+\]\[(?:SPEAK|ACT|THOUGHT)\]', content):
+            continue
+
+        # [CONTINUE] es un marcador especial, no un mensaje del jugador
+        if content.strip() == "[CONTINUE]":
+            continue
+
+        # Multi-personaje: [ROBERTO] texto → [ROBERTO][SPEAK] texto
+        m = re.match(r'^\[(\w+)\]\s+(.*)', content)
+        if m and m.group(1).isupper() and len(m.group(1)) <= 12:
+            msg["content"] = f"[{m.group(1)}][SPEAK] {m.group(2)}"
+            msg["speaker_tag"] = m.group(1)
+            continue
+
+        # Sin tag → asignar el tag del usuario
+        msg["content"] = f"[{tag}][SPEAK] {content}"
+
     return messages
 
 VToolLlama._get_inference_messages = _get_inference_messages
@@ -108,24 +135,46 @@ VToolLlama._split_tagged_response = _split_tagged_response
 
 
 def _extract_inline_context(self: VToolLlama, prompt: str) -> str:
-    """Extrae [context <tipo> <texto>] del prompt, guarda la entrada
-    y retorna el prompt limpio."""
+    """Extrae contexto inline legacy del prompt.
+
+    [context <tipo> <texto>]  → legacy, tipo explícito
+    [TEXTO LARGO]             → shortcut scene
+    (TEXTO LARGO)             → shortcut time
+    """
     import re
     from ..orquestador import CONTEXT_TYPES, ContextInjector
 
     if not self._chat_store or not self._memory._conversation_id:
         return prompt
 
-    pattern = r'\[context\s+(\w+)\s+(.*?)\]'
+    injector = ContextInjector(
+        self._chat_store, self._memory._conversation_id, self._memory._branch_id
+    )
     cleaned = prompt
-    injector = ContextInjector(self._chat_store, self._memory._conversation_id, self._memory._branch_id)
 
-    for match in re.finditer(pattern, prompt, re.IGNORECASE):
+    # Legacy: [context tipo texto]
+    for match in re.finditer(r'\[context\s+(\w+)\s+(.*?)\]', prompt, re.IGNORECASE):
         ctx_type = match.group(1).lower()
         content = match.group(2).strip()
         if ctx_type in CONTEXT_TYPES and content:
             injector.add(ctx_type, content)
-            self._log_debug("CTX", f"Inline context [{ctx_type}]: {content[:50]}")
+            self._log_debug("CTX", f"[context {ctx_type}]: {content[:50]}")
+        cleaned = cleaned.replace(match.group(0), "", 1)
+
+    # [TEXTO LARGO] → scene (multi-word, 2+ palabras)
+    for match in re.finditer(r'\[(\w+(?:\s+\w+)+[^\]]*?)\]', cleaned):
+        content = match.group(1).strip()
+        if content:
+            injector.add("scene", content)
+            self._log_debug("CTX", f"[scene]: {content[:50]}")
+        cleaned = cleaned.replace(match.group(0), "", 1)
+
+    # (TEXTO LARGO) → time (multi-word, 2+ palabras)
+    for match in re.finditer(r'\((\w+(?:\s+\w+)+[^)]*?)\)', cleaned):
+        content = match.group(1).strip()
+        if content:
+            injector.add("time", content)
+            self._log_debug("CTX", f"(time): {content[:50]}")
         cleaned = cleaned.replace(match.group(0), "", 1)
 
     return cleaned.strip()
@@ -204,6 +253,7 @@ def _inject_soul_context_into_messages(
     if not context:
         return messages
 
+    # v15: inyectar en CADA user message (soporta multi-segmento)
     for i in range(len(messages) - 1, -1, -1):
         if messages[i].get("role") == "user":
             messages[i] = dict(messages[i])
@@ -211,7 +261,6 @@ def _inject_soul_context_into_messages(
                 messages[i]["content"].rstrip()
                 + "\n\n" + context
             )
-            break
     return messages
 
 VToolLlama._inject_soul_context_into_messages = _inject_soul_context_into_messages
@@ -352,6 +401,9 @@ def _on_stream_tool_detected(self: VToolLlama, fn_name: str, fn_args: dict) -> N
 VToolLlama._on_stream_tool_detected = _on_stream_tool_detected
 
 
+VToolLlama._inject_char_thoughts = lambda self, messages: None
+
+
 def chat(
     self: VToolLlama,
     prompt: str,
@@ -372,33 +424,48 @@ def chat(
     internal_tools = get_active_internal_tools(prompt, self._config)
     active_tools = (tools or []) + internal_tools
 
-    # Extraer context inline [context tipo texto]
+    # Paso 1: Extraer context inline legacy [context tipo texto] + [texto] scene
     prompt = self._extract_inline_context(prompt)
 
+    # Paso 2: Slash commands
     slash_result = self._handle_slash_command(prompt)
     scene_prompt = ""
-
     if slash_result is not None:
         return slash_result
 
-    mem_prefix = "#mem "
-    system_injection = ""
-    if prompt.strip().startswith(mem_prefix):
-        mem_content = prompt.strip()[len(mem_prefix):].strip()
-        if mem_content:
-            self._character_manager.add_memory(
-                content=mem_content, always_include=True, priority=1.0,
-            )
-            self._log_info(f"🧠 [#mem] Memoria guardada: {mem_content}")
-            system_injection = f"\n\n[SYSTEM: El usuario acaba de guardar un recuerdo: '{mem_content}'. Confirma brevemente en character que lo has recordado, sin mencionar herramientas ni sistemas.]"
+    # Paso 3: Procesar inline commands (#, [], :, *)
+    original_prompt = prompt
+    inline_messages: list[dict] = []
+    had_inline = False
+    if self._inline_processor and self._inline_processor.has_inline_commands(prompt):
+        had_inline = True
+        inline_messages = self._inline_processor.process(prompt, self)
+
+    # Si todo el contenido fue consumido por comandos inline
+    # (ej: solo [SCENE], solo (time), o combinaciones sin texto restante)
+    if had_inline and not inline_messages:
+        prompt = "[CONTINUE]"
+        original_prompt = "[CONTINUE]"
 
     with self._lock:
-        self._short_memory.append({"role": "user", "content": prompt})
+        tag = self._user_tag.upper() if self._user_tag else "PLAYER"
 
-        self._memory.add_user_message(prompt)
+        if inline_messages:
+            for msg in inline_messages:
+                tagged = f"[{tag}][{msg['tag']}] {msg['content']}"
+                self._short_memory.append({"role": "user", "content": tagged})
+                self._memory.add_user_message(
+                    tagged, speaker_tag=tag,
+                )
+        else:
+            # Mensaje normal sin comandos inline
+            self._short_memory.append({"role": "user", "content": prompt})
+            self._memory.add_user_message(prompt)
+
         self._auto_trim_if_needed()
 
-        self._apply_emotional_trigger(prompt)
+        # Emotional trigger sobre el texto ORIGINAL combinado (v15)
+        self._apply_emotional_trigger(original_prompt)
 
         loop_count = 0
         MAX_LOOPS = 3
@@ -410,15 +477,9 @@ def chat(
             messages = self._get_inference_messages()
 
             if loop_count == 1:
-                self._inject_soul_context_into_messages(messages, prompt)
+                self._inject_soul_context_into_messages(messages, original_prompt)
                 self._inject_dynamic_state_into_messages(messages)
-                self._inject_tool_policy_if_needed(messages, prompt)
-                # scene context injection moved to /scene_view command
-
-            if system_injection and loop_count == 1:
-                if messages and messages[-1].get("role") == "user":
-                    messages[-1] = dict(messages[-1])
-                    messages[-1]["content"] += system_injection
+                self._inject_tool_policy_if_needed(messages, original_prompt)
 
             try:
                 if not skip_generation:
@@ -439,9 +500,7 @@ def chat(
                     response_text = msg_choice.get("content") or ""
                     tool_calls = msg_choice.get("tool_calls", None)
 
-                    # Debug log: después de generate() para capturar mensajes completos
-                    self._log_debug_turn(prompt, messages, response_text)
-
+                    self._log_debug_turn(original_prompt, messages, response_text)
                     self._record_stats(result)
                 else:
                     skip_generation = False
@@ -485,8 +544,8 @@ def chat(
                         self._short_memory.append({"role": "assistant", "content": "(Llama a herramienta externa)"})
                         return msg_choice
 
-                if self._tool_manager.needs_tool_coercion(prompt, response_text, bool(tool_calls), False):
-                    coercion = self._tool_manager.build_coercion_prompt(prompt)
+                if self._tool_manager.needs_tool_coercion(original_prompt, response_text, bool(tool_calls), False):
+                    coercion = self._tool_manager.build_coercion_prompt(original_prompt)
                     if coercion:
                         self._log_debug("TOOL", f"Coercion retry: {coercion[:60]}...")
                         coerce_result = self._model_manager.generate(
@@ -518,8 +577,6 @@ def chat(
                 self._short_memory.append({"role": "assistant", "content": response_text})
                 self._log_generation_stats()
 
-                # auto-save eliminado
-
                 # Marcar contexto como entregado
                 try:
                     from ..orquestador import ContextInjector
@@ -532,7 +589,6 @@ def chat(
                     pass
 
                 self._auto_index_if_needed()
-
                 return response_text
 
             except ModelNotLoadedError:
@@ -562,33 +618,44 @@ def stream_chat(
         )
     self._validate_prompt(prompt)
 
+    prompt = self._extract_inline_context(prompt)
+
     slash_result = self._handle_slash_command(prompt)
     scene_prompt = ""
-
     if slash_result is not None:
         yield slash_result
         return
 
-    mem_prefix = "#mem "
-    system_injection = ""
-    if prompt.strip().startswith(mem_prefix):
-        mem_content = prompt.strip()[len(mem_prefix):].strip()
-        if mem_content:
-            self._character_manager.add_memory(
-                content=mem_content, always_include=True, priority=1.0,
-            )
-            self._log_info(f"🧠 [#mem] Memoria guardada: {mem_content}")
-            system_injection = f"\n\n[SYSTEM: El usuario acaba de guardar un recuerdo: '{mem_content}'. Confirma brevemente en character que lo has recordado, sin mencionar herramientas ni sistemas.]"
+    original_prompt = prompt
+    inline_messages: list[dict] = []
+    had_inline = False
+    if self._inline_processor and self._inline_processor.has_inline_commands(prompt):
+        had_inline = True
+        inline_messages = self._inline_processor.process(prompt, self)
 
-    internal_tools = get_active_internal_tools(prompt, self._config)
+    if had_inline and not inline_messages:
+        prompt = "[CONTINUE]"
+        original_prompt = "[CONTINUE]"
+
+    internal_tools = get_active_internal_tools(original_prompt, self._config)
     active_tools = (tools or []) + internal_tools
 
     self._check_and_rebuild_if_needed()
 
     with self._lock:
-        self._short_memory.append({"role": "user", "content": prompt})
-        self._memory.add_user_message(prompt)
+        tag = self._user_tag.upper() if self._user_tag else "PLAYER"
+
+        if inline_messages:
+            for msg in inline_messages:
+                tagged = f"[{tag}][{msg['tag']}] {msg['content']}"
+                self._short_memory.append({"role": "user", "content": tagged})
+                self._memory.add_user_message(tagged, speaker_tag=tag)
+        else:
+            self._short_memory.append({"role": "user", "content": prompt})
+            self._memory.add_user_message(prompt)
+
         self._auto_trim_if_needed()
+        self._apply_emotional_trigger(original_prompt)
 
         loop_count = 0
         MAX_LOOPS = 3
@@ -598,15 +665,9 @@ def stream_chat(
             messages = self._get_inference_messages()
 
             if loop_count == 1:
-                self._inject_soul_context_into_messages(messages, prompt)
+                self._inject_soul_context_into_messages(messages, original_prompt)
                 self._inject_dynamic_state_into_messages(messages)
-                self._inject_tool_policy_if_needed(messages, prompt)
-                # scene context injection moved to /scene_view command
-
-            if system_injection and loop_count == 1:
-                if messages and messages[-1].get("role") == "user":
-                    messages[-1] = dict(messages[-1])
-                    messages[-1]["content"] += system_injection
+                self._inject_tool_policy_if_needed(messages, original_prompt)
 
             self._stats.begin_generation()
 
@@ -662,8 +723,7 @@ def stream_chat(
 
                 self._record_stats_from_stream(stream, full_response)
 
-                # Debug log: mensajes + respuesta completa
-                self._log_debug_turn(prompt, messages, full_response)
+                self._log_debug_turn(original_prompt, messages, full_response)
 
                 handled = self._tool_manager.handle_structured_calls(
                     final_tool_calls or [],
@@ -710,7 +770,6 @@ def stream_chat(
                     self._short_memory.append({"role": "assistant", "content": full_response})
 
                 self._log_generation_stats()
-                # auto-save eliminado
 
                 # Marcar contexto como entregado
                 try:

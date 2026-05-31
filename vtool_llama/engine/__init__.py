@@ -13,5 +13,6 @@ from . import chat         # noqa: F401
 from . import character    # noqa: F401
 from . import memory       # noqa: F401
 from . import slash_commands  # noqa: F401
+from . import inline          # noqa: F401
 
 __all__ = ["VToolLlama"]

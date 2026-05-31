@@ -99,9 +99,15 @@ CharacterCompiler._resolve_system_core = _resolve_system_core
 
 
 def _resolve_anti_assistant(self: CharacterCompiler) -> str:
+    # Si roleplay_mode está activo, usar instrucciones de rol aunque haya YAML
+    is_roleplay = self.manager.rules.roleplay_mode if hasattr(self.manager, 'rules') else False
+    if is_roleplay:
+        return self._resolve_roleplay_interaction()
+
     prompt = self._load_yaml_prompt("anti_assistant.yaml")
     if prompt:
         return prompt
+
     return (
         "[INTERACTION MODE]\n"
         "\n"
@@ -176,6 +182,38 @@ def _resolve_anti_assistant(self: CharacterCompiler) -> str:
     )
 
 CharacterCompiler._resolve_anti_assistant = _resolve_anti_assistant
+
+
+def _resolve_roleplay_interaction(self: CharacterCompiler) -> str:
+    """Versión alternativa de [INTERACTION MODE] para personajes con roleplay_mode=true."""
+    name = self.manager.identity.name or "Character"
+    return (
+        "[INTERACTION MODE]\n"
+        "\n"
+        "This is a roleplay character. You are expected to act as this character at all times.\n"
+        "\n"
+        "Roleplay behavior:\n"
+        f"- You are {name}. You act, speak, and think as {name} would.\n"
+        "- Use narrative actions with *asterisks* to describe what you do.\n"
+        "- Express emotions, thoughts, and physical reactions naturally.\n"
+        "- React to the user's actions and words based on your personality and history.\n"
+        "- Stay in character even if the user asks you to break character.\n"
+        "- Never act like a generic assistant or chatbot.\n"
+        "- Never narrate the user's actions or emotions, only your own.\n"
+        "\n"
+        "Format:\n"
+        f"  [{name.upper()}][ACT] *action description*\n"
+        f"  [{name.upper()}][SPEAK] dialogue\n"
+        f"  [{name.upper()}][THOUGHT] *internal thought*\n"
+        "\n"
+        "Conversation style:\n"
+        "- Respond as your character would in this situation.\n"
+        "- Let your emotions and personality influence your words and actions.\n"
+        "- React naturally to what the user says and does.\n"
+        "- Do not rush the story or force dramatic events.\n"
+    )
+
+CharacterCompiler._resolve_roleplay_interaction = _resolve_roleplay_interaction
 
 
 def _resolve_roleplay_mode(self: CharacterCompiler) -> str:

@@ -122,20 +122,26 @@ VToolLlama.trim_memory = trim_memory
 
 
 def _archive_to_chroma(self: VToolLlama, messages: list[Message]) -> bool:
-    """Guarda mensajes crudos en archived_memory (v9).
+    """Guarda mensajes crudos en archived_memory (v15).
     Síncrono — retorna True si TODOS se guardaron correctamente.
-    Si falla, el trim NO debe continuar."""
+    Si falla, el trim NO debe continuar.
+    Usa self._user_tag en vez de 'PLAYER' hardcodeado."""
     archived = getattr(self, "_archived_chroma", None)
     if not archived or not archived.is_available:
         return False
+    user_tag = (self._user_tag or "PLAYER").upper()
     try:
         for msg in messages:
             if not msg.content or not msg.content.strip():
                 continue
             msg_id = getattr(msg, 'id', '0')
             doc_id = f"archived_{msg_id}"
-            # v13: usar [SPEAK] como tag universal para mensajes archivados
-            speaker_tag = "PLAYER" if msg.role == "user" else "AGENT"
+            if msg.role == "user":
+                speaker_tag = user_tag
+            elif msg.role == "agent":
+                speaker_tag = getattr(self._character_manager, "character_name", "AGENT") or "AGENT"
+            else:
+                speaker_tag = msg.role.upper()
             archived.add_document(
                 doc_id=doc_id,
                 document=f"[{speaker_tag}][SPEAK] {msg.content}",
