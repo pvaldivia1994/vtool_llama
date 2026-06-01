@@ -63,16 +63,18 @@ Define `VToolLlama`, la clase principal. Constructor inicializa todos los gestor
  
 | Método | Rol |
 |--------|-----|
-| `chat(prompt, ...)` | Chat sincrónico con tags `[ID][SPEAK/ACT]`. Las respuestas del modelo pasan por `_split_tagged_response()` para separar acción+diálogo |
-| `stream_chat(prompt, ...)` | Streaming con tags de identidad y split de acción+diálogo |
-| `chat_with_thinking(prompt, ...)` | Soporte `reasoning_content` nativo + tags semánticos |
-| `stream_chat_with_thinking(prompt, ...)` | Streaming con thinking + tags |
+| `chat(prompt, ...)` | Chat sincrónico en prosa natural (v18). Extrae `<think>` del content y lo guarda separado en DB (v19). `show_thinking=false` filtra `<think>` del retorno |
+| `stream_chat(prompt, ...)` | Streaming en prosa natural. Extrae `<think>` en vivo, filtra tokens de thinking cuando `show_thinking=false` |
+| `chat_with_thinking(prompt, ...)` | Soporte `reasoning_content` nativo + extracción de `<think>` de content. Guarda thinking en DB separado |
+| `stream_chat_with_thinking(prompt, ...)` | Streaming con thinking + yield condicional según `show_thinking` |
 | `add_tool_message(content, id)` | Agrega respuesta de herramienta al historial y la persiste en SQLite |
-| `_get_inference_messages()` | Construye mensajes con tags `[USER=Tag][SAYS/DOES/THINKS]`. Detecta multi-personaje: `[ROBERTO] texto` → `[USER=Roberto][SAYS]` |
-| `_split_tagged_response(text)` | Post-procesa respuestas separando `[ASSISTANT=Name][DOES] *acción* diálogo` en líneas independientes (v17) |
-| `_inject_dynamic_state_into_messages(messages)` | Inyecta `[STATE]` con emoción/relación actual (solo si `inject_dynamic_state=true`) |
+| `_get_inference_messages()` | Construye mensajes con prefijo `Nombre:` en prosa natural (v18). Detecta multi-personaje: `[ROBERTO] texto` → `Roberto: texto` |
+| `_validate_prose_response(text)` | Valida y normaliza respuesta: limpia whitespace, elimina `<think>` residuales (v18). Reemplaza a `_split_tagged_response()` |
+| `_inject_char_thoughts(messages)` | Inyecta `#char`/`-texto-` como `<Name thinks: ...>` en prosa (v18) |
+| `_inject_dynamic_state_into_messages(messages)` | Inyecta estado emocional/relacional actual (solo si `inject_dynamic_state=true`) |
 | `_inject_tool_policy_if_needed(messages, prompt)` | Inyecta política de tools como mensaje system dinámico |
-| `_log_debug_turn(prompt, messages, response)` | Log de depuración a `character_log.md` |
+| `_inject_active_contexts(messages)` | Inyecta entradas activas de ContextInjector como system messages, intercaladas según su posición `order` en el texto original |
+| `_log_debug_turn(prompt, messages, response, raw_response, thinking)` | Log de depuración a `character_log.md` con campos: respuesta íntegra, pensamiento extraído, mensaje extraído, resultado al usuario |
 | `_on_stream_tool_detected(name, args)` | Callback del StreamPostProcessor |
 | `_reconstruct_tool_calls(chunks)` | Reconstruye tool calls desde chunks de stream |
  
@@ -93,16 +95,16 @@ El fallback textual se controla con `enable_text_tool_fallback`. La ejecucion in
 
 Procesa comandos inline en el mensaje del usuario antes de llegar al modelo. Pipeline: hash (`#`), scene (`[]`), time (`()`), char (`-`), action (`*`), thought (`:`). Cada paso extrae su patrón, lo ejecuta, y preserva el texto circundante como segmentos cronológicos.
 
-**Pipeline:**
+**Pipeline (v18 — prosa natural):**
 ```
 Input:  *Entro* [CUECA OSCURA] :peligroso: #world test# -esta nerviosa- Hola
 
 1. HASH:  #world test# → ContextInjector.add("world", "test")
 2. SCENE: [CUECA OSCURA] → ContextInjector.add("scene", "CUECA OSCURA")
 3. TIME:  (no hay)
-4. CHAR:  -esta nerviosa- → buffer _char_thought_buffer
-5. SPLIT: *Entro* → segmento ACT, :peligroso: → segmento THINKS, Hola → segmento SAYS
-6. BUILD: [{tag:DOES, content:*Entro*}, {tag:THINKS, content:peligroso}, {tag:SAYS, content:Hola}]
+4. CHAR:  -esta nerviosa- → buffer _char_thought_buffer → <Name thinks: texto>
+5. SPLIT: divide por *...* y :...: boundaries
+6. RESULT: segmentos como texto plano (sin tags SAYS/DOES/THINKS)
 ```
 
 **Patrones:**
@@ -110,11 +112,11 @@ Input:  *Entro* [CUECA OSCURA] :peligroso: #world test# -esta nerviosa- Hola
 | Sintaxis | Regex | Acción |
 |----------|-------|--------|
 | `#comando args#` | `#(\w+)(?:\s+(.*?))?#` | Ejecuta handler registrado |
-| `[TEXTO LARGO]` | `\[(\w+(?:\s+\w+)+[^\]]*?)\]` | `ContextInjector.add("scene", ...)` |
-| `(TEXTO LARGO)` | `\((\w+(?:\s+\w+)+[^)]*?)\)` | `ContextInjector.add("time", ...)` |
-| `*texto*` | `\*(.*?)\*` | Se etiqueta como `[USER][DOES]` |
-| `:texto:` | `:([^:]+?):` | Se etiqueta como `[USER][THINKS]` |
-| `-texto-` | `-(\w+(?:\s+\w+)+[^-]*?)-` | Buffer `_char_thought_buffer` → `[ASSISTANT][THINKS]` |
+| `[TEXTO LARGO]` | `\[(\w+(?:\s+\w+)+[^\]]*?)\]` | `ContextInjector.add("scene", ..., order=match.start())` |
+| `(TEXTO LARGO)` | `\((\w+(?:\s+\w+)+[^)]*?)\)` | `ContextInjector.add("time", ..., order=match.start())` |
+| `*texto*` | `\*(.*?)\*` | Se preserva como texto plano (acción en prosa) |
+| `:texto:` | `:([^:]+?):` | Se preserva como texto plano |
+| `-texto-` | `-(\w+(?:\s+\w+)+[^-]*?)-` | Buffer `_char_thought_buffer` → `<Name thinks: texto>` |
 
 **Comandos # registrados (10):**
 
@@ -131,7 +133,7 @@ Input:  *Entro* [CUECA OSCURA] :peligroso: #world test# -esta nerviosa- Hola
 | `#mem texto#` | `_cmd_hash_mem` | Memoria persistente |
 | `#tag NOMBRE#` | `_cmd_hash_tag` | Cambia `_user_tag` |
 
-**Inyección de `#char` / `-texto-`:** el pensamiento se guarda en `_char_thought_buffer`, y durante el loop de generación `_inject_char_thoughts()` lo inserta como `system` message con formato `[ASSISTANT=Name][THINKS] *...*`. El modelo lo lee como pensamiento propio gracias al tag literal.
+**Inyección de `#char` / `-texto-` (v18):** el pensamiento se guarda en `_char_thought_buffer`, y durante el loop de generación `_inject_char_thoughts()` lo inserta como `system` message con formato `<Name thinks: ...>`. El modelo lo lee como pensamiento propio.
 
 **Comandos no registrados:** se dejan como texto literal (no se extraen ni eliminan).
 
@@ -315,20 +317,27 @@ ContextBuilder
 3. Consolidar en list[dict]
 4. Guardar context_snapshot si debug
 
-### `chat_memory.py` — ChatMemory (actualizado)
+### `chat_memory.py` — ChatMemory (v19)
 
-Sigue siendo un ring buffer en RAM, pero ahora puede sincronizar con SQLite:
+Ring buffer en RAM con sincronización a SQLite. Incorpora el sistema de thinking v19.
 
-| Método nuevo | Rol |
-|---|---|
+| Método | Rol |
+|--------|-----|
 | `bind_store(store, builder, counter, conv_id, branch, leaf)` | Vincula al SQLite event store |
-| `load_context(token_budget)` | Reconstruye el buffer desde ContextBuilder (usa maxlen del deque, no `_history_limit`) |
-| `add_user_message(content, speaker_tag="")` | Persiste en SQLite con `speaker_tag` (v13) |
-| `add_assistant_message(content, tool_calls, speaker_tag="")` | Persiste en SQLite con `speaker_tag` |
-| `set_archive_callback(callback)` | Callback para archivar mensajes cuando rotan del deque (v12) |
+| `load_context(token_budget)` | Reconstruye el buffer desde ContextBuilder |
+| `add_user_message(content, speaker_tag="")` | Persiste en SQLite |
+| `add_assistant_message(content, tool_calls, speaker_tag="", thinking="")` | Persiste en SQLite con `thinking` separado |
+| `_message_to_dict(msg)` | Retorna dict sin campo `thinking` (se inyecta inline en content via `get_context_messages`) |
+| `get_context_messages()` | Retorna mensajes. Optimización v19: solo el **último** assistant message lleva `<think>` inline; históricos van sin thinking |
+| `set_archive_callback(callback)` | Callback para archivar mensajes cuando rotan del deque |
 | `_archive_oldest_if_full()` | Archiva el mensaje más antiguo antes de que el deque lo rote |
 
-**Fix v12**: El deque ahora usa `history_limit` (default 40, maxlen=42) en vez de `chat_memory_limit` (5). Esto permite ~20 turnos de conversación antes de rotar mensajes viejos.
+**Thinking system (v19):**
+- `Message.thinking: str` — campo nuevo en el dataclass
+- `add_assistant_message(..., thinking=thinking)` — guarda thinking en la columna `messages.thinking` de SQLite y en el `Message` del deque
+- `get_context_messages()` — busca el último assistant con `m.thinking` no vacío y le inyecta `<think>\n{m.thinking}\n</think>\n` en el content. Los históricos NO llevan thinking (ahorro de tokens)
+- `_message_to_dict()` ya NO incluye `d["thinking"]` — el thinking solo va inline en content
+- El campo `thinking` en SQLite permite consultar los pensamientos sin parsear content
 
 ## Dependencias
 
@@ -386,6 +395,7 @@ VToolLlama.chat(prompt)
 │   ├── _inject_soul_context()
 │   ├── _inject_dynamic_state()
 │   ├── _inject_tool_policy()
+│   ├── _inject_active_contexts()  → ContextInjector activos como system (order respeta posición)
 │   └── ModelManager.generate()    → infiere
 ├── _feed_response_to_drift_detector()
 ├── ChatMemory.add_assistant_message() → split_tagged_response + escribe a SQLite

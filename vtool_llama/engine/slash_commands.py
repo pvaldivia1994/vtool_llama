@@ -478,7 +478,7 @@ def _cmd_tag(self: VToolLlama, args: str) -> str:
             self._chat_store.set_state(self._memory._conversation_id, "user_tag", tag)
         except Exception:
             pass
-    return f"Tag de usuario cambiado a [{tag}]. Tus mensajes se etiquetarán como [USER={tag}][SAYS/DOES/THINKS]."
+    return f"Tag de usuario cambiado a [{tag}]. Tus mensajes usarán '{tag}:' como prefijo."
 
 VToolLlama._cmd_tag = _cmd_tag
 

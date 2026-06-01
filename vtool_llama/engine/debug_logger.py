@@ -99,11 +99,29 @@ class CharacterDebugLogger:
         log_text = json.dumps(compressed, ensure_ascii=False, indent=2)
         self._append(f"```json\n{log_text}\n```\n\n")
 
-    def log_model_response(self, response: str) -> None:
-        """Registra la respuesta del modelo."""
+    def log_model_raw_response(self, raw: str) -> None:
+        """Registra la respuesta integra del modelo (con thinking incluido)."""
         if not self._enabled:
             return
-        self._append(f"**Modelo**: {response}\n\n")
+        self._append(f"**Respuesta integra del modelo**:\n\n```\n{raw}\n```\n\n")
+
+    def log_extracted_thinking(self, thinking: str) -> None:
+        """Registra el pensamiento extraido de la respuesta."""
+        if not self._enabled or not thinking:
+            return
+        self._append(f"**pensamiento extraido**:\n\n```\n{thinking}\n```\n\n")
+
+    def log_extracted_message(self, message: str) -> None:
+        """Registra el mensaje extraido (sin thinking)."""
+        if not self._enabled:
+            return
+        self._append(f"**mensaje extraido**:\n\n```\n{message}\n```\n\n")
+
+    def log_model_response(self, response: str) -> None:
+        """Registra la respuesta final enviada al usuario."""
+        if not self._enabled:
+            return
+        self._append(f"**resultado enviado al usuario**: {response}\n\n")
 
     def log_context_info(self, usage: dict) -> None:
         """Registra info del contexto post-inferencia."""

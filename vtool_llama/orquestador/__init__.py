@@ -5,12 +5,12 @@ Permite agregar entradas de contexto persistentes que se inyectan
 automáticamente en el prompt del personaje en cada turno.
 
 Tipos de contexto disponibles:
-  character  → [CHARACTER] Estado emocional del personaje
-  time       → [TIME] Momento del día, clima, estación
-  thoughts   → [THOUGHTS] Pensamientos internos del personaje
-  world      → [WORLD] Eventos del entorno, ambiente
-  scene      → [ESCENA] Descripción de escena (desde /scene_view)
-  custom     → [CUSTOM] Contexto definido por el usuario
+  character  → Estado emocional del personaje
+  time       → Momento del día, clima, estación
+  thoughts   → Pensamientos internos del personaje
+  world      → Eventos del entorno, ambiente
+  scene      → Descripción de escena (desde /scene_view)
+  custom     → Contexto definido por el usuario
 """
 
 from .context_injector import (
@@ -21,8 +21,9 @@ from .context_injector import (
     ContextInjector,
 )
 from .strategies import ContextInjectionStrategy, SceneContextStrategy
+
+# Tags legacy — mantenidos para compatibilidad
 from .tags import (
-    TAG_DEFINITIONS,
     SAYS, DOES, THINKS,
     DEFINE, STATE, SCENE,
     CONTENT_TAGS, SYSTEM_TAGS,
@@ -32,7 +33,6 @@ __all__ = [
     "CONTEXT_DEFINITIONS", "CONTEXT_HEADER", "CONTEXT_TYPES",
     "ContextEntry", "ContextInjector",
     "ContextInjectionStrategy", "SceneContextStrategy",
-    "TAG_DEFINITIONS",
     "SAYS", "DOES", "THINKS",
     "DEFINE", "STATE", "SCENE",
     "CONTENT_TAGS", "SYSTEM_TAGS",

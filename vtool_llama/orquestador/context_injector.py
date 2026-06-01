@@ -26,21 +26,20 @@ CONTEXT_TYPES = {
 }
 
 CONTEXT_DEFINITIONS = {
-    "scene": "[SCENE] Current scene, location, present characters, and active events.",
-    "character": "[STATE] Current emotional, mental, and physical state of the character.",
-    "thoughts": "[THINKS] Private thoughts, intentions, motivations, and internal feelings.",
-
-    "player": "[SAYS] Current action or behavior of the player.",
-    "time": "[SCENE][TIME] Time, date, weather, season, and passage of time.",
-    "world": "[SCENE][WORLD] Relevant world events, politics, conflicts, and environmental changes.",
-    "memory": "[DEFINE][MEMORY] Important long-term facts, relationships, and past events.",
-    "custom": "[SCENE][CUSTOM] Additional user-defined contextual information.",
+    "scene": "Current scene, location, present characters, and active events.",
+    "character": "Current emotional, mental, and physical state of the character.",
+    "thoughts": "Private thoughts, intentions, motivations, and internal feelings.",
+    "player": "Current action or behavior of the player.",
+    "time": "Time, date, weather, season, and passage of time.",
+    "world": "Relevant world events, politics, conflicts, and environmental changes.",
+    "memory": "Important long-term facts, relationships, and past events.",
+    "custom": "Additional user-defined contextual information.",
 }
 
 CONTEXT_HEADER = (
     "[CONTEXT]\n\n"
-    "Context tags provide information about the current scene, state, and environment. "
-    "Use them to maintain consistency in your responses."
+    "Context information about the current scene, state, and environment. "
+    "Use it to maintain consistency in your responses."
 )
 
 
@@ -92,6 +91,8 @@ class ContextInjector:
         tag = self.tag_for_type(ctx_type)
         summary = f"{tag} {content}"
         ord_val = order if order is not None else self._next_order()
+        import logging
+        logging.getLogger(__name__).debug(f"ContextInjector.add({ctx_type}) order={ord_val} (received={order}) content={content[:30]}")
         return self._store.add_summary(
             conversation_id=self._conversation_id,
             branch_id=self._branch_id,

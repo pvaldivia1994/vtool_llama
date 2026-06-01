@@ -22,6 +22,7 @@ class ChatMessage:
     status: str = "active"
     token_count: int = 0
     speaker_tag: str = ""
+    thinking: str = ""
     created_at: str = ""
 
 

@@ -122,9 +122,8 @@ VToolLlama.trim_memory = trim_memory
 
 
 def _archive_to_chroma(self: VToolLlama, messages: list[Message]) -> bool:
-    """Guarda mensajes crudos en archived_memory (v17).
-    Usa [USER=Tag][SAYS] para mensajes del usuario,
-    [ASSISTANT=Name][SAYS] para respuestas del personaje."""
+    """Guarda mensajes crudos en archived_memory (v18).
+    Usa formato prosa: 'Nombre: mensaje' para búsqueda semántica."""
     archived = getattr(self, "_archived_chroma", None)
     if not archived or not archived.is_available:
         return False
@@ -137,16 +136,16 @@ def _archive_to_chroma(self: VToolLlama, messages: list[Message]) -> bool:
             doc_id = f"archived_{msg_id}"
             if msg.role == "user":
                 speaker_tag = user_tag
-                prefix = f"[USER={speaker_tag}]"
+                prefix = f"{speaker_tag}:"
             elif msg.role == "agent":
                 speaker_tag = getattr(self._character_manager, "character_name", "AGENT") or "AGENT"
-                prefix = f"[ASSISTANT={speaker_tag.capitalize()}]"
+                prefix = f"{speaker_tag.capitalize()}:"
             else:
                 speaker_tag = msg.role.upper()
-                prefix = f"[{speaker_tag}]"
+                prefix = f"{speaker_tag}:"
             archived.add_document(
                 doc_id=doc_id,
-                document=f"{prefix}[SAYS] {msg.content}",
+                document=f"{prefix} {msg.content}",
                 metadata={
                     "type": "archived",
                     "role": msg.role,

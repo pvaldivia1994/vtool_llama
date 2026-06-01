@@ -212,31 +212,8 @@ def test_extract_scene():
     assert any("UNA CUEVA OSCURA" in ctx for ctx in active)
 
 
-def test_tag_segment():
-    from vtool_llama.engine.inline import InlineProcessor
-    p = InlineProcessor()
-
-    # Acción
-    tag, content = p._tag_segment("*abre la puerta*")
-    assert tag == "DOES"
-    assert "*abre la puerta*" in content
-
-    # Pensamiento (limpia :)
-    tag, content = p._tag_segment(":esto es peligroso:")
-    assert tag == "THINKS"
-    assert content == "esto es peligroso"
-
-    # Texto normal
-    tag, content = p._tag_segment("Hola como estas")
-    assert tag == "SAYS"
-    assert content == "Hola como estas"
-
-    # Mixto: acción + texto → DOES
-    tag, content = p._tag_segment("*mira* y dice hola")
-    assert tag == "DOES"
-
-
 def test_build_messages():
+    """_build_messages retorna segmentos como texto plano (v18)."""
     from vtool_llama.engine.inline import InlineProcessor
     p = InlineProcessor()
 
@@ -247,10 +224,9 @@ def test_build_messages():
     ])
 
     assert len(msgs) == 3
-    assert msgs[0]["tag"] == "DOES"
-    assert msgs[1]["tag"] == "SAYS"
-    assert msgs[2]["tag"] == "THINKS"
-    assert msgs[2]["content"] == "esto es peligroso"
+    assert msgs[0] == "*Entro sigilosamente*"
+    assert msgs[1] == "hay alguien ahi"
+    assert msgs[2] == ":esto es peligroso:"
 
 
 # ──────────────────────────────────────────────────────────────
@@ -287,7 +263,7 @@ def test_chat_with_world_command(tmp_path):
 
 
 def test_chat_with_char_thought(tmp_path):
-    """#char pensamiento → buffer se inyecta como [ASSISTANT=X][THINKS] system msg."""
+    """#char pensamiento → buffer se inyecta como <Name thinks: text>."""
     llm = _make_llm(tmp_path)
     # Track buffer antes de que chat() lo inyecte y limpie
     original_inject = llm._inject_char_thoughts
@@ -307,7 +283,7 @@ def test_chat_with_char_thought(tmp_path):
 
 
 def test_chat_with_action_thought_speak(tmp_path):
-    """*acción*, :pensamiento:, y texto normal en un mensaje."""
+    """*acción*, :pensamiento:, y texto normal en un mensaje (v18 prosa)."""
     llm = _make_llm(tmp_path)
 
     # Verificar mensajes guardados en SQLite
@@ -318,9 +294,10 @@ def test_chat_with_action_thought_speak(tmp_path):
     )
     contents = [m.content for m in msgs if m.role == "user"]
 
-    assert any("[DOES]" in c and "Entro sigilosamente" in c for c in contents)
-    assert any("[THINKS]" in c and "esto es malo" in c for c in contents)
-    assert any("[SAYS]" in c and "hay alguien ahi" in c for c in contents)
+    # En prosa, los mensajes se guardan con prefijo PLAYER: y texto plano
+    assert any("PLAYER:" in c for c in contents)
+    assert any("Entro sigilosamente" in c for c in contents)
+    assert any("hay alguien ahi" in c for c in contents)
 
 
 def test_chat_with_bare_scene_context(tmp_path):
@@ -354,7 +331,7 @@ def test_chat_multi_character(tmp_path):
 
 
 def test_user_tag_respected(tmp_path):
-    """_user_tag debe usarse en vez de [USER] hardcodeado, formato [USER=LIU]."""
+    """_user_tag debe usarse como prefijo 'LIU:' en prosa (v18)."""
     llm = _make_llm(tmp_path)
     llm._user_tag = "LIU"
     llm.chat("Hola")
@@ -362,7 +339,7 @@ def test_user_tag_respected(tmp_path):
     # Verificar en _get_inference_messages
     messages = llm._get_inference_messages()
     user_msgs = [m for m in messages if m.get("role") == "user"]
-    assert any("[USER=LIU]" in m["content"] for m in user_msgs)
+    assert any("LIU:" in m["content"] for m in user_msgs)
 
 
 def test_hash_mem_command(tmp_path):
@@ -375,7 +352,7 @@ def test_hash_mem_command(tmp_path):
 
 
 def test_mixed_all_commands(tmp_path):
-    """Todos los comandos inline en un solo mensaje."""
+    """Todos los comandos inline en un solo mensaje (v18 prosa)."""
     llm = _make_llm(tmp_path)
     llm._character_manager._character_name = "Luna"
 
@@ -391,15 +368,14 @@ def test_mixed_all_commands(tmp_path):
     # World inyectado
     assert _check_context_summary(llm, "hay estalactitas")
 
-    # Mensajes en SQLite deben tener los tags correctos
+    # Mensajes en SQLite — en prosa, se guardan con prefijo PLAYER:
     msgs = llm._chat_store.get_branch_messages(
         llm._memory._conversation_id, llm._memory._branch_id
     )
     contents = [m.content for m in msgs if m.role == "user"]
-    assert any("[DOES]" in c and "Entro sigilosamente" in c for c in contents)
-    assert any("[SAYS]" in c and "hay alguien" in c for c in contents)
-    assert any("[THINKS]" in c and "esto es peligroso" in c for c in contents)
-    assert any("[DOES]" in c and "Miro alrededor" in c for c in contents)
+    assert any("PLAYER:" in c for c in contents)
+    assert any("Entro sigilosamente" in c for c in contents)
+    assert any("hay alguien" in c for c in contents)
 
 
 def test_time_parentheses(tmp_path):
@@ -442,35 +418,35 @@ def test_hash_unregistered_preserved_in_chat(tmp_path):
 # ──────────────────────────────────────────────────────────────
 
 def test_get_inference_messages_uses_user_tag(tmp_path):
-    """_get_inference_messages debe usar _user_tag, no [USER] hardcodeado."""
+    """_get_inference_messages debe usar _user_tag como prefijo 'LIU:'."""
     llm = _make_llm(tmp_path)
     llm._user_tag = "LIU"
     llm._memory.add_user_message("Hola mundo")
 
     messages = llm._get_inference_messages()
     user_msgs = [m for m in messages if m.get("role") == "user"]
-    assert any("[USER=LIU]" in m["content"] for m in user_msgs)
+    assert any("LIU:" in m["content"] for m in user_msgs)
 
 
 def test_get_inference_messages_multichar(tmp_path):
-    """[ROBERTO] en contenido → debe etiquetar como [USER=Roberto][SAYS]."""
+    """[ROBERTO] en contenido → debe etiquetar como 'Roberto:' en prosa."""
     llm = _make_llm(tmp_path)
     llm._user_tag = "PLAYER"
     llm._memory.add_user_message("[ROBERTO] Hola que tal")
 
     messages = llm._get_inference_messages()
     user_msgs = [m for m in messages if m.get("role") == "user"]
-    assert any("[USER=Roberto][SAYS]" in m["content"] for m in user_msgs)
+    assert any("Roberto:" in m["content"] for m in user_msgs)
 
 
 def test_get_inference_messages_pretagged_skipped(tmp_path):
-    """Mensajes ya pre-tagueados por InlineProcessor no se duplican."""
+    """Mensajes con prefijo 'Nombre:' no se duplican."""
     llm = _make_llm(tmp_path)
     llm._user_tag = "LIU"
-    llm._memory.add_user_message("[USER=LIU][DOES] *accion*")
+    llm._memory.add_user_message("LIU: *accion*")
 
     messages = llm._get_inference_messages()
     user_msgs = [m for m in messages if m.get("role") == "user"]
-    # No debe tener DOBLE tag
+    # No debe tener doble prefijo
     for m in user_msgs:
-        assert m["content"].count("[USER=LIU]") <= 1
+        assert m["content"].count("LIU:") <= 1

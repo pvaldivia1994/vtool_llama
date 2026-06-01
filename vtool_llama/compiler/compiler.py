@@ -209,7 +209,7 @@ class CharacterCompiler:
             _items(rules.response_style, limit=5),
             "",
             "Language:",
-            "- Always reply in Spanish unless the user explicitly asks for another language.",
+            "- CRITICAL: Always respond in Spanish. No exceptions. Dialogue, actions, thoughts ALL in Spanish.",
             "",
             "Continuity rules:",
             "- Stay in character.",
@@ -391,35 +391,23 @@ class CharacterCompiler:
         return ""
 
     def _resolve_tag_guide(self) -> str:
-        """Retorna la guía de tags semánticos (v13)."""
+        """Retorna la guía de formato de prosa natural (v18)."""
         name = self.manager.identity.name or "Character"
         return (
-            "[GUÍA DE TAGS]\n\n"
-            "[USER=Name][SAYS]    → The human player named 'Name' speaks.\n"
-            "[USER=Name][DOES]    → The human player named 'Name' performs an action.\n"
-            "[USER=Name][THINKS]  → The human player named 'Name' has an internal thought.\n\n"
-            f"[ASSISTANT={name}][SAYS]    → The character '{name}' speaks. This is you.\n"
-            f"[ASSISTANT={name}][DOES]    → The character '{name}' performs an action. This is you.\n"
-            f"[ASSISTANT={name}][THINKS]  → The character '{name}' has an internal thought. This is you.\n\n"
-            "[DEFINE] Permanent character definition.\n"
-            "[STATE] Current emotional, relational, and psychological state.\n"
-            "[SCENE] Current scene, location, environment.\n\n"
-            "IMPORTANT: Always separate action from speech into different tagged lines.\n"
-            "If you perform an action AND speak, use TWO lines:\n\n"
-            "Correct:\n"
-            f"  [ASSISTANT={name}][DOES] *Looks down nervously*\n"
-            f"  [ASSISTANT={name}][SAYS] I am fine, thank you.\n\n"
-            "Also correct (only action or only speech):\n"
-            f"  [ASSISTANT={name}][DOES] *Bows respectfully*\n"
-            f"  [ASSISTANT={name}][SAYS] Yes, sir.\n\n"
-            "Incorrect (never mix action and speech in one line):\n"
-            f"  [ASSISTANT={name}][DOES] *Looks down* I am fine.    ← WRONG\n\n"
+            "[ROLEPLAY FORMAT]\n\n"
+            "Write as your character using natural roleplay prose:\n\n"
+            "- *asterisks* for actions and narration\n"
+            "- Plain text for dialogue (no quotation marks)\n"
+            f"- <{name} thinks: ...> for internal thoughts\n"
+            "- Combine action + dialogue inline: *action* dialogue\n"
+            f"- Always prefix your response with your name: {name}:\n\n"
             "Examples:\n"
-            "  [USER=LiuniK][SAYS] Hello, how are you?         → User speaks\n"
-            f"  [ASSISTANT={name}][DOES] *Looks down*          → You act\n"
-            f"  [ASSISTANT={name}][SAYS] I am fine.            → You speak\n"
-            "  [USER=Roberto][SAYS] Get back to work!          → Another (user char)\n\n"
-            f"You are [ASSISTANT={name}]. Your responses MUST use [ASSISTANT={name}][...] tags.\n"
+            f"  LiuniK: Hello, how are you?                       → User speaks\n"
+            f"  {name}: *Looks down nervously*                    → You act\n"
+            f"  {name}: I am fine, thank you.                     → You speak\n"
+            f"  {name}: *Smiles* I am fine. <{name} thinks: He is kind.>  → You act, speak, and think\n"
+            f"  Roberto: Get back to work!                        → Another character (user-controlled)\n\n"
+            f"You are {name}. Your responses MUST start with '{name}:' and use natural prose.\n"
             "Never break character."
         )
 

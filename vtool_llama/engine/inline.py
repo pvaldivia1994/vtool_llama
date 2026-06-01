@@ -38,11 +38,11 @@ class InlineProcessor:
                      or ACTION_PATTERN.search(text)
                      or THOUGHT_PATTERN.search(text))
 
-    def process(self, text: str, llm: VToolLlama) -> list[dict]:
-        """Procesa el texto y retorna lista de mensajes.
-        Cada mensaje: {"role": "user", "tag": "SAYS"|"DOES"|"THINKS", "content": str}
-        El contenido NO incluye el tag del speaker — eso lo agrega chat()
-        usando _user_tag.
+    def process(self, text: str, llm: VToolLlama) -> list[str]:
+        """Procesa el texto y retorna segmentos en prosa natural (v18).
+
+        Extrae #comandos, [contexto], (tiempo), y -pensamientos- como
+        efectos secundarios. Retorna el texto limpio como segmentos.
         """
         # Paso 1: extraer #comando# → segmentos de texto
         segments = self._extract_hash(text, llm)
@@ -59,8 +59,8 @@ class InlineProcessor:
         # Paso 5: dividir por *acción* y :pensamiento: boundaries
         segments = self._split_by_markers(segments)
 
-        # Paso 5: armar mensajes con tags SAYS/DOES/THINKS
-        return self._build_messages(segments)
+        # Paso 6: retornar segmentos como texto plano (sin tags)
+        return segments
 
     def _extract_hash(self, text: str, llm: VToolLlama) -> list[str]:
         """Extrae #comando args# REGISTRADOS, ejecuta handler.
@@ -93,7 +93,8 @@ class InlineProcessor:
         return segments if segments else [text]
 
     def _extract_scene(self, segments: list[str], llm: VToolLlama) -> list[str]:
-        """De cada segmento, extrae [texto] → ContextInjector.add('scene', texto)."""
+        """De cada segmento, extrae [texto] → ContextInjector.add('scene', texto).
+        Usa match.start() como order para preservar la posicion relativa."""
         if not llm._chat_store or not llm._memory._conversation_id:
             return segments
 
@@ -111,8 +112,8 @@ class InlineProcessor:
             for match in SCENE_PATTERN.finditer(segment):
                 content = match.group(1).strip()
                 if content:
-                    injector.add("scene", content)
-                    llm._log_debug("INLINE", f"[scene] {content}")
+                    injector.add("scene", content, order=match.start())
+                    llm._log_debug("STATE", f"_extract_scene order={match.start()} content={content[:30]}")
                 cleaned = cleaned.replace(match.group(0), "", 1)
             cleaned = cleaned.strip()
             if cleaned:
@@ -140,8 +141,8 @@ class InlineProcessor:
             for match in TIME_PAREN_PATTERN.finditer(segment):
                 content = match.group(1).strip()
                 if content:
-                    injector.add("time", content)
-                    llm._log_debug("INLINE", f"(time) {content}")
+                    injector.add("time", content, order=match.start())
+                    llm._log_debug("STATE", f"_extract_time order={match.start()} content={content[:30]}")
                 cleaned = cleaned.replace(match.group(0), "", 1)
             cleaned = cleaned.strip()
             if cleaned:
@@ -151,7 +152,7 @@ class InlineProcessor:
 
     def _extract_char_dash(self, segments: list[str], llm: VToolLlama) -> list[str]:
         """De cada segmento, extrae -texto multi-palabra- → buffer _char_thought_buffer.
-        Se inyecta en el turno actual como [ASSISTANT=Name][THINKS] *texto*.
+        Se inyecta en el turno actual como <Name thinks: texto>.
         El -texto- se elimina del mensaje del usuario."""
         name = (llm._character_manager.character_name or "ASSISTANT").capitalize()
         buffer = getattr(llm, "_char_thought_buffer", None)
@@ -165,7 +166,7 @@ class InlineProcessor:
                 content = match.group(1).strip()
                 if content:
                     buffer.append((name, content))
-                    llm._log_debug("INLINE", f"-char- buffer: [ASSISTANT={name}][THINKS] *{content}*")
+                    llm._log_debug("INLINE", f"-char- buffer: <{name} thinks: {content}>")
                 cleaned = cleaned.replace(match.group(0), "", 1)
             cleaned = cleaned.strip()
             if cleaned:
@@ -191,37 +192,9 @@ class InlineProcessor:
                     result.append(stripped)
         return result
 
-    def _build_messages(self, segments: list[str]) -> list[dict]:
-        """Etiqueta cada segmento como SAYS/DOES/THINKS según su contenido."""
-        messages: list[dict] = []
-        for seg in segments:
-            if not seg.strip():
-                continue
-            tag, content = self._tag_segment(seg)
-            messages.append({
-                "role": "user",
-                "tag": tag,
-                "content": content,
-            })
-        return messages
-
-    def _tag_segment(self, segment: str) -> tuple[str, str]:
-        """Retorna (tag, content_limpio) para un segmento.
-        *acción* → (DOES, *acción*)   preserva *
-        :pensamiento: → (THINKS, pensamiento)  limpia :
-        texto normal → (SAYS, texto)
-        """
-        has_action = bool(ACTION_PATTERN.search(segment))
-        has_thought = bool(THOUGHT_PATTERN.search(segment))
-
-        if has_action:
-            return ("DOES", segment)
-
-        if has_thought:
-            content = THOUGHT_PATTERN.sub(r'\1', segment)
-            return ("THINKS", content.strip())
-
-        return ("SAYS", segment)
+    def _build_messages(self, segments: list[str]) -> list[str]:
+        """Retorna segmentos como texto plano (v18, sin tags)."""
+        return [seg for seg in segments if seg.strip()]
 
     def list_commands(self) -> dict[str, str]:
         return {k: v["desc"] for k, v in self._hash_commands.items()}
@@ -300,8 +273,8 @@ def _cmd_hash_thought(args: str, llm: VToolLlama) -> None:
 
 
 def _cmd_hash_char(args: str, llm: VToolLlama) -> None:
-    """#char thought → buffer temporal, se inyecta en el turno actual como system message.
-    Formato: [ASSISTANT=Name][THINKS] *...* — el modelo lo reconoce como pensamiento propio.
+    """#char thought → buffer temporal, se inyecta en el turno actual.
+    Formato: <Name thinks: ...> — el modelo lo reconoce como pensamiento propio.
     """
     if not args:
         return
@@ -309,12 +282,12 @@ def _cmd_hash_char(args: str, llm: VToolLlama) -> None:
     buffer = getattr(llm, "_char_thought_buffer", None)
     if buffer is not None:
         buffer.append((name, args))
-    llm._log_debug("INLINE", f"[#char] buffer: [ASSISTANT={name}][THINKS] *{args}*")
+    llm._log_debug("INLINE", f"[#char] buffer: <{name} thinks: {args}>")
 
 
 def _cmd_hash_tag(args: str, llm: VToolLlama) -> None:
     """#tag NOMBRE → cambia el tag del usuario para la sesión.
-    Ejemplo: #tag LIUNIK# → los mensajes se etiquetan [USER=LIUNIK][SAYS/DOES/THINKS]
+    Ejemplo: #tag LIUNIK# → los mensajes usan 'LIUNIK:' como prefijo
     """
     tag = args.strip().upper()
     if not tag or not tag.isalpha():

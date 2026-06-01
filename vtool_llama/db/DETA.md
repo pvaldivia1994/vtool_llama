@@ -26,7 +26,7 @@ Source of truth del historial conversacional. Reemplaza a ChromaDB para almacena
 | Tabla | Propósito |
 |-------|-----------|
 | `conversations` | Sesiones por personaje con active_branch + active_leaf |
-| `messages` | Eventos inmutables con branch_id, message_index, parent_id, speaker_tag (v13) |
+| `messages` | Eventos inmutables con branch_id, message_index, parent_id, speaker_tag (v13), thinking TEXT (v19) |
 | `branches` | Ramas (br_001, br_002...) con label descriptivo |
 | `summaries` | Episodios/resúmenes automáticos o manuales |
 | `tool_calls` | Registro detallado de tool calls |
@@ -40,7 +40,7 @@ ChatStore
 ├── get_or_create_conversation(name) → Conversation
 ├── set_active_leaf(conv_id, branch_id, msg_id)
 │
-├── add_message(conv_id, branch, role, content, ..., speaker_tag="") → int (v13)
+├── add_message(conv_id, branch, role, content, ..., speaker_tag="", thinking="") → int (v19)
 ├── get_message_path(leaf_id) → list[ChatMessage]
 ├── get_active_branch_messages(conv_id, branch, leaf, limit)
 ├── soft_delete_message(msg_id)

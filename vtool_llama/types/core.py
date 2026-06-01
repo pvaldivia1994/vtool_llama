@@ -14,6 +14,7 @@ class Message:
     content: Optional[str] = None
     tool_calls: Optional[list[dict]] = None
     tool_call_id: Optional[str] = None
+    thinking: str = ""
 
 
 @dataclass
@@ -52,7 +53,7 @@ class ConfigSchema:
     top_p: float = 0.9
     top_k: int = 40
     repeat_penalty: float = 1.1
-    max_tokens: int = 512
+    max_tokens: int = 2048
     seed: int = -1
     stream: bool = True
     enable_logging: bool = True
@@ -68,6 +69,7 @@ class ConfigSchema:
 
     semantic_memory_enabled: bool = False
     disable_thinking: bool = False
+    show_thinking: bool = True  # v19: false guarda thinking en DB pero no lo muestra al usuario
     context_snapshot_debug: bool = False
     chat_template_file: str = ""
     inject_scene_context: bool = False

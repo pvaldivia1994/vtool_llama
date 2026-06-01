@@ -15,11 +15,10 @@ from ..tools import (
 
 
 def _get_inference_messages(self: VToolLlama) -> list[dict]:
-    """Retorna los mensajes para inferencia con tags v17.
+    """Retorna los mensajes para inferencia en formato prosa natural (v18).
 
-    - Usa self._user_tag → [USER=Tag]
-    - Detecta multi-personaje: [ROBERTO] texto → [USER=Roberto][SAYS]
-    - Salta mensajes ya pre-tagueados por InlineProcessor
+    - Usa self._user_tag → "Nombre: texto"
+    - Detecta multi-personaje: [ROBERTO] texto → "Roberto: texto"
     """
     import re
     messages = self._memory.get_context_messages()
@@ -32,23 +31,23 @@ def _get_inference_messages(self: VToolLlama) -> list[dict]:
         if not content:
             continue
 
-        # Ya pre-tagueado por InlineProcessor (ej: [USER=LIUNIK][SAYS] Hola)
-        if re.match(r'^\[(?:USER|ASSISTANT)=\w+\]\[(?:SAYS|DOES|THINKS)\]', content):
-            continue
-
         # [CONTINUE] es un marcador especial, no un mensaje del jugador
         if content.strip() == "[CONTINUE]":
             continue
 
-        # Multi-personaje: [ROBERTO] texto → [USER=Roberto][SAYS] texto
+        # Ya tiene prefijo de personaje (ya procesado)
+        if re.match(r'^[A-Z][a-zA-Z]*:', content):
+            continue
+
+        # Multi-personaje: [ROBERTO] texto → "Roberto: texto"
         m = re.match(r'^\[(\w+)\]\s+(.*)', content)
         if m and m.group(1).isupper() and len(m.group(1)) <= 12:
-            msg["content"] = f"[USER={m.group(1).capitalize()}][SAYS] {m.group(2)}"
+            msg["content"] = f"{m.group(1).capitalize()}: {m.group(2)}"
             msg["speaker_tag"] = m.group(1)
             continue
 
-        # Sin tag → [USER=Tag][SAYS]
-        msg["content"] = f"[USER={user}][SAYS] {content}"
+        # Sin prefijo → "Nombre: texto"
+        msg["content"] = f"{user}: {content}"
 
     return messages
 
@@ -82,7 +81,8 @@ VToolLlama._inject_tool_policy_if_needed = _inject_tool_policy_if_needed
 
 
 def _log_debug_turn(self: VToolLlama, prompt: str, messages: list[dict],
-                     response: str = "") -> None:
+                     response: str = "", raw_response: str = "",
+                     thinking: str = "") -> None:
     """Helper para debug logging en chat/stream/thinking."""
     deb = getattr(self, "_debug_logger", None)
     if not deb or not deb._enabled:
@@ -90,7 +90,12 @@ def _log_debug_turn(self: VToolLlama, prompt: str, messages: list[dict],
     try:
         deb.log_turn_start(prompt)
         deb.log_messages_sent_to_model(messages)
+        if raw_response:
+            deb.log_model_raw_response(raw_response)
+        if thinking:
+            deb.log_extracted_thinking(thinking)
         if response:
+            deb.log_extracted_message(response)
             deb.log_model_response(response)
             deb.log_context_info(self.get_token_usage())
     except Exception:
@@ -99,56 +104,26 @@ def _log_debug_turn(self: VToolLlama, prompt: str, messages: list[dict],
 VToolLlama._log_debug_turn = _log_debug_turn
 
 
-def _split_tagged_response(self: VToolLlama, text: str, speaker: str = "") -> str:
-    """Post-procesa la respuesta separando [DOES] + dialogo en lineas (v17)."""
-    import re
-    if not speaker:
-        speaker = (self._character_manager.character_name or "AGENT").upper()
-    lines = text.split("\n")
-    result = []
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        # [ASSISTANT=Name][DOES] *accion* texto_extra
-        m = re.match(r'^\[ASSISTANT=(\w+)\]\[DOES\]\s+(\*[^*]+\*)\s*(.*)', line)
-        if m:
-            sp = m.group(1)
-            result.append(f"[ASSISTANT={sp}][DOES] {m.group(2).strip()}")
-            extra = m.group(3).strip()
-            if extra:
-                result.append(f"[ASSISTANT={sp}][SAYS] {extra}")
-            continue
-        # [ASSISTANT=Name][SAYS] con asteriscos al inicio
-        m = re.match(r'^\[ASSISTANT=(\w+)\]\[SAYS\]\s+(\*[^*]+\*)\s*(.*)', line)
-        if m:
-            sp = m.group(1)
-            result.append(f"[ASSISTANT={sp}][DOES] {m.group(2).strip()}")
-            extra = m.group(3).strip()
-            if extra:
-                result.append(f"[ASSISTANT={sp}][SAYS] {extra}")
-            continue
-        # Legacy: [ID][ACT] y [ID][SPEAK] para mensajes antiguos
-        m = re.match(r'^\[(\w+)\]\[ACT\]\s+(\*[^*]+\*)\s*(.*)', line)
-        if m:
-            sp = m.group(1)
-            result.append(f"[ASSISTANT={sp}][DOES] {m.group(2).strip()}")
-            extra = m.group(3).strip()
-            if extra:
-                result.append(f"[ASSISTANT={sp}][SAYS] {extra}")
-            continue
-        m = re.match(r'^\[(\w+)\]\[SPEAK\]\s+(\*[^*]+\*)\s*(.*)', line)
-        if m:
-            sp = m.group(1)
-            result.append(f"[ASSISTANT={sp}][DOES] {m.group(2).strip()}")
-            extra = m.group(3).strip()
-            if extra:
-                result.append(f"[ASSISTANT={sp}][SAYS] {extra}")
-            continue
-        result.append(line)
-    return "\n".join(result)
+def _validate_prose_response(self: VToolLlama, text: str) -> str:
+    """Valida y normaliza la respuesta en prosa (v18).
 
-VToolLlama._split_tagged_response = _split_tagged_response
+    - Limpia whitespace
+    - Elimina bloques <think>...</think> residuales (por si el modelo los emitio)
+    - No modifica tags bracket legacy para compatibilidad
+    """
+    if not text:
+        return text
+    cleaned = text.strip()
+
+    import re
+    cleaned = re.sub(r'<think>.*?</think>', '', cleaned, flags=re.DOTALL)
+    unclosed = re.search(r'<think>', cleaned)
+    if unclosed:
+        cleaned = cleaned[:unclosed.start()]
+
+    return cleaned.strip()
+
+VToolLlama._validate_prose_response = _validate_prose_response
 
 
 def _extract_inline_context(self: VToolLlama, prompt: str) -> str:
@@ -182,16 +157,16 @@ def _extract_inline_context(self: VToolLlama, prompt: str) -> str:
     for match in re.finditer(r'\[(\w+(?:\s+\w+)+[^\]]*?)\]', cleaned):
         content = match.group(1).strip()
         if content:
-            injector.add("scene", content)
-            self._log_debug("CTX", f"[scene]: {content[:50]}")
+            injector.add("scene", content, order=match.start())
+            self._log_debug("CTX", f"[scene] {content[:50]} (order={match.start()})")
         cleaned = cleaned.replace(match.group(0), "", 1)
 
     # (TEXTO LARGO) → time (multi-word, 2+ palabras)
     for match in re.finditer(r'\((\w+(?:\s+\w+)+[^)]*?)\)', cleaned):
         content = match.group(1).strip()
         if content:
-            injector.add("time", content)
-            self._log_debug("CTX", f"(time): {content[:50]}")
+            injector.add("time", content, order=match.start())
+            self._log_debug("CTX", f"(time) {content[:50]} (order={match.start()})")
         cleaned = cleaned.replace(match.group(0), "", 1)
 
     return cleaned.strip()
@@ -421,16 +396,15 @@ VToolLlama._on_stream_tool_detected = _on_stream_tool_detected
 def _inject_char_thoughts(
     self: VToolLlama, messages: list[dict]
 ) -> None:
-    """Inyecta #char y -texto- thoughts como system messages.
-    Formato [ASSISTANT=Name][THINKS] *...* — el tag literal
-    elimina ambigüedad: el modelo lo reconoce como pensamiento propio."""
+    """Inyecta #char y -texto- thoughts como <Name thinks: ...> inline.
+    Se añaden como parte del asistente para que fluyan naturalmente."""
     buffer = getattr(self, "_char_thought_buffer", None)
     if not buffer:
         return
     for name, thought in buffer:
         thought_msg = {
             "role": "system",
-            "content": f"[ASSISTANT={name}][THINKS] *{thought}*",
+            "content": f"<{name} thinks: {thought}>",
         }
         for i in range(len(messages) - 1, -1, -1):
             if messages[i].get("role") == "user":
@@ -439,6 +413,53 @@ def _inject_char_thoughts(
     buffer.clear()
 
 VToolLlama._inject_char_thoughts = _inject_char_thoughts
+
+
+def _inject_active_contexts(self: VToolLlama, messages: list[dict]) -> None:
+    """Inyecta entradas activas de ContextInjector como system messages.
+    Cada entrada se inserta en su posición real: las que aparecen antes
+    del texto del usuario van antes, las que aparecen después van después.
+    (scene, time, world, goals, player, thoughts — agregados via
+    (texto), [texto], #time, #world, etc.)"""
+    if not self._chat_store or not self._memory._conversation_id:
+        return
+    try:
+        from ..orquestador import ContextInjector
+        inj = ContextInjector(
+            self._chat_store, self._memory._conversation_id, self._memory._branch_id,
+        )
+        entries = inj.list(only_active=True)
+        if not entries:
+            return
+
+        # Debug: log órdenes reales
+        for e in entries:
+            self._log_debug("STATE", f"active ctx: order={e.order} tag={e.tag} content={e.content[:40]}")
+
+        # Encontrar SOLO el último mensaje de usuario (el del turno actual)
+        last_user = -1
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "user":
+                last_user = i
+                break
+        if last_user == -1:
+            return
+
+        # Insertar cada entrada según su posición:
+        # - Si order == 0 (primer carácter del mensaje), va ANTES del user actual
+        # - Si no, va DESPUÉS del user actual (manteniendo orden relativo)
+        for entry in entries:
+            ctx_msg = {"role": "system", "content": f"{entry.tag} {entry.content}"}
+            if entry.order == 0:
+                messages.insert(last_user, ctx_msg)
+                last_user += 1
+            else:
+                messages.insert(last_user + 1, ctx_msg)
+                last_user += 1
+    except Exception:
+        pass
+
+VToolLlama._inject_active_contexts = _inject_active_contexts
 
 
 def chat(
@@ -489,10 +510,10 @@ def chat(
 
         if inline_messages:
             for msg in inline_messages:
-                tagged = f"[USER={tag}][{msg['tag']}] {msg['content']}"
-                self._short_memory.append({"role": "user", "content": tagged})
+                prose = f"{tag}: {msg}"
+                self._short_memory.append({"role": "user", "content": prose})
                 self._memory.add_user_message(
-                    tagged, speaker_tag=tag,
+                    prose, speaker_tag=tag,
                 )
         else:
             # Mensaje normal sin comandos inline
@@ -518,6 +539,7 @@ def chat(
                 self._inject_dynamic_state_into_messages(messages)
                 self._inject_tool_policy_if_needed(messages, original_prompt)
                 self._inject_char_thoughts(messages)
+                self._inject_active_contexts(messages)
 
             try:
                 if not skip_generation:
@@ -538,7 +560,22 @@ def chat(
                     response_text = msg_choice.get("content") or ""
                     tool_calls = msg_choice.get("tool_calls", None)
 
-                    self._log_debug_turn(original_prompt, messages, response_text)
+                    # Extraer thinking de <think>...</think> (modelos razonadores)
+                    import re
+                    think_text = ""
+                    clean_response = response_text
+                    think_match = re.search(r'<think>(.*?)</think>', clean_response, re.DOTALL)
+                    if think_match:
+                        extracted = think_match.group(1).strip()
+                        if extracted:
+                            think_text = extracted
+                        clean_response = clean_response.replace(think_match.group(0), "", 1).strip()
+                    unclosed = re.search(r'<think>', clean_response)
+                    if unclosed:
+                        clean_response = clean_response[:unclosed.start()].strip()
+
+                    self._log_debug_turn(original_prompt, messages, clean_response,
+                                         raw_response=response_text, thinking=think_text)
                     self._record_stats(result)
                 else:
                     skip_generation = False
@@ -611,7 +648,26 @@ def chat(
 
                 self._feed_response_to_drift_detector(response_text)
 
-                self._memory.add_assistant_message(content=self._split_tagged_response(response_text), tool_calls=None)
+                # Re-extraer thinking por si response_text cambio (tool coercion loop)
+                store_thinking = think_text
+                store_content = response_text
+                if "<think>" in store_content:
+                    import re
+                    m = re.search(r'<think>(.*?)</think>', store_content, re.DOTALL)
+                    if m:
+                        ext = m.group(1).strip()
+                        if ext:
+                            store_thinking = ext
+                        store_content = store_content.replace(m.group(0), "", 1).strip()
+                    u = re.search(r'<think>', store_content)
+                    if u:
+                        store_content = store_content[:u.start()].strip()
+
+                self._memory.add_assistant_message(
+                    content=self._validate_prose_response(store_content),
+                    tool_calls=None,
+                    thinking=store_thinking,
+                )
                 self._short_memory.append({"role": "assistant", "content": response_text})
                 self._log_generation_stats()
 
@@ -627,6 +683,11 @@ def chat(
                     pass
 
                 self._auto_index_if_needed()
+                # Si show_thinking=false, limpiar <think> del contenido retornado
+                if not self._config.show_thinking and "<think>" in response_text:
+                    import re
+                    response_text = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL)
+                    response_text = re.sub(r'<think>.*', '', response_text, flags=re.DOTALL).strip()
                 return response_text
 
             except ModelNotLoadedError:
@@ -685,9 +746,9 @@ def stream_chat(
 
         if inline_messages:
             for msg in inline_messages:
-                tagged = f"[USER={tag}][{msg['tag']}] {msg['content']}"
-                self._short_memory.append({"role": "user", "content": tagged})
-                self._memory.add_user_message(tagged, speaker_tag=tag)
+                prose = f"{tag}: {msg}"
+                self._short_memory.append({"role": "user", "content": prose})
+                self._memory.add_user_message(prose, speaker_tag=tag)
         else:
             self._short_memory.append({"role": "user", "content": prompt})
             self._memory.add_user_message(prompt)
@@ -707,6 +768,7 @@ def stream_chat(
                 self._inject_dynamic_state_into_messages(messages)
                 self._inject_tool_policy_if_needed(messages, original_prompt)
                 self._inject_char_thoughts(messages)
+                self._inject_active_contexts(messages)
 
             self._stats.begin_generation()
 
@@ -735,6 +797,11 @@ def stream_chat(
                     log_fn=self._log_info,
                 )
 
+                # Filtro de <think> para streaming cuando show_thinking=False
+                show_thinking_stream = self._config.show_thinking
+                think_buffer = ""
+                in_think_block = False
+
                 for chunk in stream:
                     choices = chunk.get("choices", [])
                     if not choices:
@@ -746,15 +813,57 @@ def stream_chat(
                     else:
                         for event in stream_pp.feed(delta):
                             if event["type"] == "text":
-                                full_response += event["content"]
-                                yield event["content"]
+                                token = event["content"]
+                                full_response += token
+                                if show_thinking_stream:
+                                    yield token
+                                else:
+                                    # Filtrar <think>...</think> en vivo
+                                    think_buffer += token
+                                    while True:
+                                        if not in_think_block:
+                                            idx = think_buffer.find("<think>")
+                                            if idx == -1:
+                                                # No hay <think> aun, emitir lo seguro
+                                                safe_end = think_buffer.rfind("<")
+                                                if safe_end != -1 and "<think>".startswith(think_buffer[safe_end:]):
+                                                    before = think_buffer[:safe_end]
+                                                    if before:
+                                                        yield before
+                                                    think_buffer = think_buffer[safe_end:]
+                                                else:
+                                                    yield think_buffer
+                                                    think_buffer = ""
+                                                break
+                                            before = think_buffer[:idx]
+                                            if before:
+                                                yield before
+                                            think_buffer = think_buffer[idx + 7:]
+                                            in_think_block = True
+                                        else:
+                                            idx = think_buffer.find("</think>")
+                                            if idx == -1:
+                                                # Aun dentro del think, bufferear
+                                                close_candidate = think_buffer.rfind("<")
+                                                if close_candidate != -1 and "</think>".startswith(think_buffer[close_candidate:]):
+                                                    think_buffer = think_buffer[:close_candidate]
+                                                else:
+                                                    think_buffer = ""
+                                                break
+                                            think_buffer = think_buffer[idx + 8:]
+                                            in_think_block = False
                             elif event["type"] == "tool_executed":
                                 pass
 
                 for event in stream_pp.flush():
                     if event["type"] == "text":
-                        full_response += event["content"]
-                        yield event["content"]
+                        token = event["content"]
+                        full_response += token
+                        if show_thinking_stream:
+                            yield token
+
+                # Si quedo <think> sin cerrar, descartar el buffer
+                think_buffer = ""
 
                 final_tool_calls = None
                 if tool_calls_chunks:
@@ -762,7 +871,23 @@ def stream_chat(
 
                 self._record_stats_from_stream(stream, full_response)
 
-                self._log_debug_turn(original_prompt, messages, full_response)
+                # Extraer thinking de full_response para log y storage
+                import re
+                stream_think = ""
+                stream_clean = full_response or ""
+                if "<think>" in stream_clean:
+                    m = re.search(r'<think>(.*?)</think>', stream_clean, re.DOTALL)
+                    if m:
+                        ext = m.group(1).strip()
+                        if ext:
+                            stream_think = ext
+                        stream_clean = stream_clean.replace(m.group(0), "", 1).strip()
+                    u = re.search(r'<think>', stream_clean)
+                    if u:
+                        stream_clean = stream_clean[:u.start()].strip()
+
+                self._log_debug_turn(original_prompt, messages, stream_clean,
+                                     raw_response=full_response, thinking=stream_think)
 
                 handled = self._tool_manager.handle_structured_calls(
                     final_tool_calls or [],
@@ -780,7 +905,7 @@ def stream_chat(
                     continue
 
                 if handled["external_calls"]:
-                    self._memory.add_assistant_message(content=self._split_tagged_response(full_response or ""), tool_calls=handled["external_calls"])
+                    self._memory.add_assistant_message(content=self._validate_prose_response(full_response or ""), tool_calls=handled["external_calls"])
                     yield {"choices": [{"message": {"tool_calls": handled["external_calls"]}}]}
                     return
 
@@ -804,7 +929,25 @@ def stream_chat(
                         yield {"choices": [{"message": {"tool_calls": text_handled["external_calls"]}}]}
                         return
 
-                self._memory.add_assistant_message(content=self._split_tagged_response(full_response or ""), tool_calls=None)
+                # Extraer thinking de full_response (modelos razonadores)
+                stream_think = ""
+                stream_content = full_response or ""
+                if "<think>" in stream_content:
+                    m = re.search(r'<think>(.*?)</think>', stream_content, re.DOTALL)
+                    if m:
+                        ext = m.group(1).strip()
+                        if ext:
+                            stream_think = ext
+                        stream_content = stream_content.replace(m.group(0), "", 1).strip()
+                    u = re.search(r'<think>', stream_content)
+                    if u:
+                        stream_content = stream_content[:u.start()].strip()
+
+                self._memory.add_assistant_message(
+                    content=self._validate_prose_response(stream_content),
+                    tool_calls=None,
+                    thinking=stream_think,
+                )
                 if full_response:
                     self._short_memory.append({"role": "assistant", "content": full_response})
 
@@ -869,26 +1012,36 @@ def chat_with_thinking(
             )
 
             msg_choice = result["choices"][0]["message"]
+            raw_response = msg_choice.get("content") or ""
             thinking = msg_choice.get("reasoning_content") or ""
-            content = msg_choice.get("content") or ""
+            content = raw_response
 
             self._record_stats(result)
 
-            if not thinking and "<think>" in content:
-                parts = content.split("</think>", 1)
-                thinking = parts[0].replace("<think>", "").strip()
-                content = parts[1].strip() if len(parts) > 1 else ""
+            # Extraer thinking de <think>...</think> en content.
+            # Qwen devuelve el thinking EN el content (inline), NO via reasoning_content
+            import re
+            think_match = re.search(r'<think>(.*?)</think>', content, re.DOTALL)
+            if think_match:
+                extracted = think_match.group(1).strip()
+                if extracted:
+                    thinking = extracted
+                content = content.replace(think_match.group(0), "", 1).strip()
+            # Si hay <think> sin cerrar (respuesta truncada), limpiarlo
+            unclosed = re.search(r'<think>', content)
+            if unclosed:
+                content = content[:unclosed.start()].strip()
 
-            full_history_content = content
-            if thinking:
-                full_history_content = f"<think>\n{thinking}\n</think>\n{content}"
+            # Debug log: mensajes + respuesta + thinking
+            self._log_debug_turn(prompt, messages, content,
+                                 raw_response=raw_response, thinking=thinking)
 
-            # Debug log: mensajes + respuesta
-            self._log_debug_turn(prompt, messages, content)
-
-            self._memory.add_assistant_message(self._split_tagged_response(full_history_content))
+            # Guardar thinking separado en DB + memoria
+            self._memory.add_assistant_message(
+                content=self._validate_prose_response(content),
+                thinking=thinking,
+            )
             self._log_generation_stats()
-            self._auto_save_if_needed()
 
             # Marcar contexto como entregado
             try:
@@ -903,6 +1056,9 @@ def chat_with_thinking(
 
             self._auto_index_if_needed()
 
+            # Control de visibilidad del thinking
+            if thinking and not self._config.show_thinking:
+                return "", content
             return thinking, content
 
         except ModelNotLoadedError:
@@ -953,13 +1109,17 @@ def stream_chat_with_thinking(
             full_response = ""
             mode = "content"
             buffer = ""
+            collected_thinking = ""
+            collected_content = ""
 
             for chunk in stream:
                 thinking_token, content_token = self._extract_token_from_chunk(chunk)
 
                 if thinking_token:
                     full_response += thinking_token
-                    yield ("thinking", thinking_token)
+                    collected_thinking += thinking_token
+                    if self._config.show_thinking:
+                        yield ("thinking", thinking_token)
                     continue
 
                 if not content_token:
@@ -976,15 +1136,18 @@ def stream_chat_with_thinking(
                             if open_tag_candidate != -1 and "<think>".startswith(buffer[open_tag_candidate:]):
                                 before = buffer[:open_tag_candidate]
                                 if before:
+                                    collected_content += before
                                     yield ("content", before)
                                 buffer = buffer[open_tag_candidate:]
                             else:
+                                collected_content += buffer
                                 yield ("content", buffer)
                                 buffer = ""
                             break
 
                         before = buffer[:idx]
                         if before:
+                            collected_content += before
                             yield ("content", before)
                         buffer = buffer[idx + 7:]
                         mode = "thinking"
@@ -996,33 +1159,48 @@ def stream_chat_with_thinking(
                             if close_tag_candidate != -1 and "</think>".startswith(buffer[close_tag_candidate:]):
                                 before = buffer[:close_tag_candidate]
                                 if before:
-                                    yield ("thinking", before)
+                                    collected_thinking += before
+                                    if self._config.show_thinking:
+                                        yield ("thinking", before)
                                 buffer = buffer[close_tag_candidate:]
                             else:
-                                yield ("thinking", buffer)
+                                collected_thinking += buffer
+                                if self._config.show_thinking:
+                                    yield ("thinking", buffer)
                                 buffer = ""
                             break
 
                         thought = buffer[:idx]
                         if thought:
-                            yield ("thinking", thought)
+                            collected_thinking += thought
+                            if self._config.show_thinking:
+                                yield ("thinking", thought)
                         buffer = buffer[idx + 8:]
                         mode = "content"
 
             if buffer:
                 if mode == "thinking":
-                    yield ("thinking", buffer)
+                    collected_thinking += buffer
+                    if self._config.show_thinking:
+                        yield ("thinking", buffer)
                 else:
+                    collected_content += buffer
                     yield ("content", buffer)
 
             self._record_stats_from_stream(stream, full_response)
 
-            # Debug log: mensajes + respuesta
-            self._log_debug_turn(prompt, messages, full_response)
+            # Debug log: mensajes + respuesta + thinking
+            self._log_debug_turn(prompt, messages,
+                                 response=collected_content,
+                                 raw_response=full_response,
+                                 thinking=collected_thinking.strip())
 
-            self._memory.add_assistant_message(self._split_tagged_response(full_response))
+            # Guardar thinking separado en DB + memoria
+            self._memory.add_assistant_message(
+                content=self._validate_prose_response(collected_content),
+                thinking=collected_thinking.strip(),
+            )
             self._log_generation_stats()
-            self._auto_save_if_needed()
 
             # Marcar contexto como entregado
             try:

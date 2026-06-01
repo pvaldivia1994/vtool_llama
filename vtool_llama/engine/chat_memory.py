@@ -223,12 +223,12 @@ class ChatMemory:
             return msg_id
         return None
 
-    def add_assistant_message(self, content: Optional[str] = None, tool_calls: Optional[list[dict]] = None, speaker_tag: str = "") -> Optional[int]:
+    def add_assistant_message(self, content: Optional[str] = None, tool_calls: Optional[list[dict]] = None, speaker_tag: str = "", thinking: str = "") -> Optional[int]:
         """Agrega la respuesta del asistente al historial.
         Si hay store vinculado, también persiste en SQLite.
         Retorna el message_id si se persistió, None si no."""
         self._archive_oldest_if_full()
-        self._messages.append(Message(role="assistant", content=content, tool_calls=tool_calls))
+        self._messages.append(Message(role="assistant", content=content, tool_calls=tool_calls, thinking=thinking))
         self._ensure_system_prompt()
         if self._store and self._conversation_id:
             msg_id = self._store.add_message(
@@ -240,6 +240,7 @@ class ChatMemory:
                 parent_id=self._active_leaf_id,
                 token_count=self._token_counter.count_text(content) if content and self._token_counter else 0,
                 speaker_tag=speaker_tag,
+                thinking=thinking,
             )
             self._active_leaf_id = msg_id
             self._store.set_active_leaf(self._conversation_id, self._branch_id, msg_id)
@@ -270,14 +271,31 @@ class ChatMemory:
         """
         Retorna los mensajes listos para pasar a la API de
         llama-cpp-python, excluyendo mensajes vacíos.
+
+        Optimización v19: el thinking (<think>) solo se incluye en
+        el ÚLTIMO mensaje assistant. Los mensajes anteriores llevan
+        solo content para ahorrar tokens de contexto.
         """
+        # Encontrar el índice del último assistant con thinking
+        last_assistant_with_thinking = -1
+        for i, m in enumerate(self._messages):
+            if m.role == "assistant" and m.thinking:
+                last_assistant_with_thinking = i
+
         context_msgs = []
-        for m in self._messages:
-            # Si tiene tool_calls o content no está vacío
-            if m.tool_calls is not None or (m.content and m.content.strip()):
-                context_msgs.append(self._message_to_dict(m))
-            elif m.role == "assistant" and not m.content and m.tool_calls:
-                context_msgs.append(self._message_to_dict(m))
+        for i, m in enumerate(self._messages):
+            if m.tool_calls is None and (not m.content or not m.content.strip()):
+                if not (m.role == "assistant" and m.tool_calls):
+                    continue
+
+            d = self._message_to_dict(m)
+
+            # Solo el último assistant message lleva thinking inline
+            if m.role == "assistant" and m.thinking and i == last_assistant_with_thinking:
+                d["content"] = f"<think>\n{m.thinking}\n</think>\n{m.content or ''}"
+                # else: thinking omitido del contenido histórico
+
+            context_msgs.append(d)
         return context_msgs
 
     # ------------------------------------------------------------------

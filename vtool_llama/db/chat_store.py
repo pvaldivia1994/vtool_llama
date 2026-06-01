@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS messages (
     status TEXT NOT NULL DEFAULT 'active',
     token_count INTEGER DEFAULT 0,
     speaker_tag TEXT DEFAULT '',
+    thinking TEXT DEFAULT '',
     created_at TEXT NOT NULL,
     FOREIGN KEY (conversation_id) REFERENCES conversations(id)
 );
@@ -144,11 +145,16 @@ class ChatStore:
     def ensure_schema(self) -> None:
         with self._tx() as conn:
             conn.executescript(_SCHEMA_SQL)
-            # Migracion v13: agregar speaker_tag a tablas existentes
+            # Migracion v13: agregar speaker_tag
             try:
                 conn.execute("ALTER TABLE messages ADD COLUMN speaker_tag TEXT DEFAULT ''")
             except Exception:
-                pass  # ya existe
+                pass
+            # Migracion v19: agregar thinking
+            try:
+                conn.execute("ALTER TABLE messages ADD COLUMN thinking TEXT DEFAULT ''")
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Conversations
@@ -217,10 +223,10 @@ class ChatStore:
         tool_call_id: Optional[str] = None,
         token_count: int = 0,
         speaker_tag: str = "",
+        thinking: str = "",
     ) -> int:
-        self._log("SQLITE", f"add_message conv={conversation_id[:8]} role={role} speaker={speaker_tag} content='{(content or '')[:50]}'")
+        self._log("SQLITE", f"add_message conv={conversation_id[:8]} role={role} speaker={speaker_tag} thinking='{(thinking or '')[:40]}' content='{(content or '')[:50]}'")
         with self._tx() as conn:
-            # message_index auto dentro del branch
             last_idx = conn.execute(
                 "SELECT COALESCE(MAX(message_index), 0) FROM messages WHERE conversation_id = ? AND branch_id = ?",
                 (conversation_id, branch_id),
@@ -233,10 +239,10 @@ class ChatStore:
             conn.execute(
                 """INSERT INTO messages
                    (conversation_id, branch_id, message_index, parent_id,
-                    role, content, tool_calls, tool_call_id, token_count, speaker_tag, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    role, content, tool_calls, tool_call_id, token_count, speaker_tag, thinking, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (conversation_id, branch_id, next_idx, parent_id,
-                 role, content, tool_calls_json, tool_call_id, token_count, speaker_tag, now),
+                 role, content, tool_calls_json, tool_call_id, token_count, speaker_tag, thinking, now),
             )
             return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 

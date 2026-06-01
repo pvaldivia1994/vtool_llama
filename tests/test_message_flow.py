@@ -93,6 +93,9 @@ def test_messages_acumulate_in_chat():
         ctx = llm._memory.get_context_messages()
         assert len(ctx) == 13, f"Esperaba 13 mensajes (system + 6 user + 6 assistant), tengo {len(ctx)}"
 
+        if llm._chat_store:
+            llm._chat_store.close()
+
 
 def test_messages_acumulate_in_stream_chat():
     """Verifica que stream_chat() acumule mensajes correctamente."""
@@ -135,10 +138,11 @@ def test_messages_acumulate_in_stream_chat():
                 f"tengo {usage['messages']}"
             )
 
-        ctx = llm._memory.get_context_messages()
-        assert ctx[1]["content"] == "[PLAYER][SPEAK] Hola"
-        assert ctx[3]["content"] == "[PLAYER][SPEAK] Mi nombre es LiuniK"
-        assert "[PLAYER][SPEAK] Tengo un perro llamado Pepe" in [m["content"] for m in ctx], (
+        # ctx mensajes tienen prefijo PLAYER: gracias a _get_inference_messages
+        inf_msgs = llm._get_inference_messages()
+        assert inf_msgs[1]["content"] == "PLAYER: Hola"
+        assert inf_msgs[3]["content"] == "PLAYER: Mi nombre es LiuniK"
+        assert "PLAYER: Tengo un perro llamado Pepe" in [m["content"] for m in inf_msgs], (
             "El mensaje 'Tengo un perro llamado Pepe' debe estar en el contexto"
         )
 
@@ -155,11 +159,14 @@ def test_get_inference_messages_includes_all():
 
         msgs = llm._get_inference_messages()
         assert len(msgs) == 3, f"Esperaba 3 mensajes, tengo {len(msgs)}"
-        assert msgs[1]["content"] == "[PLAYER][SPEAK] Hola"
+        assert msgs[1]["content"] == "PLAYER: Hola"
 
         llm._memory.add_user_message("Mi nombre es LiuniK")
         llm._memory.add_assistant_message("respuesta 2")
 
         msgs = llm._get_inference_messages()
         assert len(msgs) == 5, f"Esperaba 5 mensajes, tengo {len(msgs)}"
-        assert msgs[3]["content"] == "[PLAYER][SPEAK] Mi nombre es LiuniK"
+        assert msgs[3]["content"] == "PLAYER: Mi nombre es LiuniK"
+
+        if llm._chat_store:
+            llm._chat_store.close()

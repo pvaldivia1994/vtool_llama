@@ -211,7 +211,7 @@ class TestOptimizations:
 
         assert "[CHARACTER CAPSULE]" in prompt
         assert "Luna" in prompt
-        assert "Always reply in Spanish" in prompt
+        assert "Always respond in Spanish" in prompt
         assert "DEFINITIONS" not in prompt
         assert "SOUL" not in prompt
 
