@@ -74,13 +74,18 @@ def load_character(
                 try:
                     from llama_cpp.llama_chat_format import Jinja2ChatFormatter
                     template_str = tpl_path.read_text(encoding="utf-8")
-                    eos = self._model_manager._model.tokenizer.eos_token if hasattr(self._model_manager._model, 'tokenizer') else ""
-                    bos = self._model_manager._model.tokenizer.bos_token if hasattr(self._model_manager._model, 'tokenizer') else ""
-                    self._model_manager._model.chat_handler = Jinja2ChatFormatter(
+                    # Usar tokenizer_ (instancia real), NO tokenizer (función de clase)
+                    model = self._model_manager._model
+                    tok = getattr(model, "tokenizer_", None) or getattr(model, "tokenizer", None)
+                    eos = tok.eos_token if tok and hasattr(tok, "eos_token") else "<|im_end|>"
+                    bos = tok.bos_token if tok and hasattr(tok, "bos_token") else ""
+                    formatter = Jinja2ChatFormatter(
                         template=template_str,
                         eos_token=eos,
                         bos_token=bos,
                     )
+                    # to_chat_handler() retorna LlamaChatCompletionHandler completo
+                    model.chat_handler = formatter.to_chat_handler()
                     self._log_debug("MODEL", f"Chat template aplicado: {tpl_path}")
                 except Exception as e:
                     self._log_warning(f"No se pudo aplicar chat template: {e}")

@@ -104,6 +104,10 @@ def load_model(self: ModelManager, model_path: Optional[str] = None,
 
             self._model = model
             self._n_keep = None  # nuevo modelo, nuevo core
+
+            # Aplicar chat template custom si está configurado
+            self._apply_chat_template()
+
             # Guardar n_ctx del usuario la primera vez (no sobrescribir en recargas)
             if self._user_n_ctx == 0:
                 self._user_n_ctx = self._config.n_ctx
@@ -123,6 +127,44 @@ def load_model(self: ModelManager, model_path: Optional[str] = None,
             self._loading = False
 
 ModelManager.load_model = load_model
+
+
+def _apply_chat_template(self: ModelManager) -> None:
+    """Aplica el chat template custom (ej: qwen.jinja) al modelo cargado.
+
+    Esto evita que el template interno del GGUF (que puede validar cosas
+    como "debe haber un user message") bloquee usos como turnos ambientales
+    donde solo hay system + assistant.
+    """
+    tpl_file = self._config.chat_template_file
+    if not tpl_file or not self._model:
+        return
+    tpl_path = Path(tpl_file)
+    if not tpl_path.is_absolute():
+        tpl_path = Path(__file__).parent.parent / "config" / tpl_file
+    if not tpl_path.exists():
+        self._log("MODEL", f"Chat template no encontrado: {tpl_path}")
+        return
+    try:
+        from llama_cpp.llama_chat_format import Jinja2ChatFormatter
+        template_str = tpl_path.read_text(encoding="utf-8")
+        # Usar tokenizer_ (instancia real), NO tokenizer (función de clase)
+        tok = getattr(self._model, "tokenizer_", None) or getattr(self._model, "tokenizer", None)
+        eos = tok.eos_token if tok and hasattr(tok, "eos_token") else "<|im_end|>"
+        bos = tok.bos_token if tok and hasattr(tok, "bos_token") else ""
+        formatter = Jinja2ChatFormatter(
+            template=template_str,
+            eos_token=eos,
+            bos_token=bos,
+        )
+        # to_chat_handler() retorna LlamaChatCompletionHandler, NO ChatFormatterResponse
+        self._model.chat_handler = formatter.to_chat_handler()
+        self._log("MODEL", f"Chat template aplicado: {tpl_path.name}")
+    except Exception as e:
+        self._log("MODEL", f"No se pudo aplicar chat template: {e}")
+
+
+ModelManager._apply_chat_template = _apply_chat_template
 
 
 def _validate_model_path(self: ModelManager, path: Path) -> None:

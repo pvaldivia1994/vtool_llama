@@ -1,0 +1,30 @@
+{%- if not messages %}
+    {{- raise_exception('No messages provided.') }}
+{%- endif %}
+
+{# ── System prompt base (primer mensaje) ── #}
+{%- if messages[0].role == 'system' %}
+    {{- '<|im_start|>system\n' + messages[0].content | trim + '<|im_end|>\n' }}
+{%- endif %}
+
+{# ── Loop de conversación ── #}
+{%- for message in messages %}
+    {%- if message.role == 'system' %}
+        {%- if not loop.first %}
+            {{- '<|im_start|>system\n[NARRATOR] ' + message.content | trim + '<|im_end|>\n' }}
+        {%- endif %}
+    {%- elif message.role == 'user' %}
+        {{- '<|im_start|>user\n' + message.content | trim + '<|im_end|>\n' }}
+    {%- elif message.role == 'assistant' %}
+        {{- '<|im_start|>assistant\n' + message.content | trim + '<|im_end|>\n' }}
+    {%- elif message.role == 'tool' %}
+        {{- '<|im_start|>tool\n' + message.content | trim + '<|im_end|>\n' }}
+    {%- else %}
+        {{- raise_exception('Unexpected message role: ' + message.role) }}
+    {%- endif %}
+{%- endfor %}
+
+{# ── Prompt de generación ── #}
+{%- if add_generation_prompt %}
+    {{- '<|im_start|>assistant\n' }}
+{%- endif %}
